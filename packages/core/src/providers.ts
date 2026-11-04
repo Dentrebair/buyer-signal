@@ -1,5 +1,6 @@
 // Provider interfaces (Q66). Business logic depends on these, never on a provider SDK.
-// Each has a real implementation in the worker and a fake in tests.
+// Each has a real implementation in @bs/integrations and a fake in tests. Add an interface when
+// its first implementation lands (search, RDAP and website fetch arrive in Sprint 2).
 
 export interface RawJobPost {
   naturalId: string; // 'job:<board>:<id>'
@@ -12,25 +13,6 @@ export interface RawJobPost {
   country: "in" | "ae" | "us";
   boardWebsite: string | null;
   boardEmployeeBand: string | null;
-}
-
-export interface JobSource {
-  readonly name: string;
-  // Starts a run; results arrive later via webhook → fetchItems.
-  startRun(input: { country: RawJobPost["country"]; title: string; limit: number }): Promise<{ runId: string }>;
-  fetchItems(datasetId: string, offset: number, limit: number): Promise<RawJobPost[]>;
-}
-
-export interface SearchResult {
-  title: string;
-  url: string;
-  snippet: string;
-}
-
-export interface SearchProvider {
-  readonly name: string;
-  readonly costPerQuery: number;
-  search(queries: { id: string; q: string; country: string }[]): Promise<Map<string, SearchResult[]>>;
 }
 
 export interface LlmCallResult<T> {
@@ -54,13 +36,4 @@ export interface LlmClient {
   json<T>(task: LlmTask, input: LlmRequest<T>): Promise<LlmCallResult<T>>;
   // Most the call can cost (full prompt + max output) — what the budget gate reserves (§5.3).
   worstCaseUsd(task: LlmTask, input: LlmRequest<unknown>): Promise<number>;
-}
-
-export interface DomainRegistry {
-  registeredAt(domain: string): Promise<Date | null>;
-}
-
-export interface WebFetcher {
-  // SSRF-safe fetch (§8.2 guards). Returns null when unreachable / blocked.
-  get(url: string): Promise<{ finalUrl: string; status: number; html: string } | null>;
 }

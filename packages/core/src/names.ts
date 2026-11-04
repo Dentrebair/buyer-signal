@@ -20,5 +20,6 @@ export function domainCacheKey(name: string, place: string | null): string {
 // Bare domain from a URL or host: "https://www.Acme.com/about" → "acme.com".
 export function bareDomain(input: string | null | undefined): string | null {
   const m = (input ?? "").trim().toLowerCase().match(/^(?:[a-z]+:\/\/)?(?:www\.)?([^/:?#\s]+)/);
-  return m?.[1] && m[1].includes(".") ? m[1] : null;
+  // Hostname characters only, so a scraped value can never smuggle markup or a path into links.
+  return m?.[1] && /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(m[1]) ? m[1] : null;
 }

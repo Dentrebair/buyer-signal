@@ -84,7 +84,7 @@ describe.skipIf(!process.env.DATABASE_URL)("worker pipeline (database)", { timeo
   it("Apify gate refuses a run that would cross the cycle cap, and defers it (§5.3, Sprint 1 acceptance)", async () => {
     // $4.499 already used of a $4.50 cap: a 10-item run (worst case $0.002) must not start.
     const { deps, sent, started } = fakes(pool, { usageUsd: 4.499 });
-    const out = await startBoardRun(deps, { country: "us", title: "accounts payable", vertical: "logistics", limit: 10 });
+    const out = await startBoardRun(deps, { country: "us", title: "accounts payable", vertical: "logistics", limit: 10 }, "test-key-deferred");
     expect(out).toEqual({ deferred: true });
     expect(started).toHaveLength(0);
     expect(sent[0]).toMatchObject({ queue: Q.startBoardRun, opts: { startAfter: 3600 } });
@@ -96,7 +96,11 @@ describe.skipIf(!process.env.DATABASE_URL)("worker pipeline (database)", { timeo
   it("start → run event → fetch → extract → scored card, with exact cost settled", async () => {
     const { deps, sent, started } = fakes(pool);
 
-    expect(await startBoardRun(deps, { country: "us", title: "accounts payable", vertical: "logistics", limit: 10 })).toEqual({ started: RUN_ID });
+    const job = { country: "us", title: "accounts payable", vertical: "logistics", limit: 10 } as const;
+    expect(await startBoardRun(deps, job, "test-key-1")).toEqual({ started: RUN_ID });
+    // pg-boss retries the same job (e.g. it expired after Apify started): no second paid run.
+    expect(await startBoardRun(deps, job, "test-key-1")).toEqual({ started: RUN_ID });
+    expect(started).toHaveLength(1);
     expect(started[0]).toMatchObject({ country: "us", title: "accounts payable", datePosted: "14" });
     const reserved = Number((await pool.query("select total_usd from spend_counters where key = $1", [apifyCycleKey(CYCLE)])).rows[0].total_usd);
     expect(reserved).toBeCloseTo(0.002, 6); // 10 × $0.0001 + $0.001

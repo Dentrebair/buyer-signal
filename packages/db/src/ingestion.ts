@@ -16,16 +16,29 @@ export type DropCounter =
   | "dropped_no_fit_count"
   | "llm_persisted_count";
 
+// Written before the paid run starts (status 'starting'); null = this job key already has a row.
 export async function createRun(
   db: Db,
-  x: { jobType: string; vertical: string | null; country: string | null; apifyRunId: string; estimatedCostUsd: number },
-): Promise<string> {
+  x: { jobKey: string; jobType: string; vertical: string | null; country: string | null; estimatedCostUsd: number },
+): Promise<string | null> {
   const r = await db.query<{ id: string }>(
-    `insert into ingestion_runs (job_type, vertical, country, apify_run_id, estimated_cost_usd)
-     values ($1, $2, $3, $4, $5) returning id`,
-    [x.jobType, x.vertical, x.country, x.apifyRunId, x.estimatedCostUsd],
+    `insert into ingestion_runs (job_key, job_type, vertical, country, estimated_cost_usd, status)
+     values ($1, $2, $3, $4, $5, 'starting') on conflict (job_key) do nothing returning id`,
+    [x.jobKey, x.jobType, x.vertical, x.country, x.estimatedCostUsd],
   );
-  return r.rows[0]!.id;
+  return r.rows[0]?.id ?? null;
+}
+
+export async function getRunByJobKey(db: Db, jobKey: string) {
+  const r = await db.query<{ id: string; apify_run_id: string | null; status: string }>(
+    "select id, apify_run_id, status from ingestion_runs where job_key = $1",
+    [jobKey],
+  );
+  return r.rows[0] ?? null;
+}
+
+export async function recordApifyRun(db: Db, id: string, apifyRunId: string): Promise<void> {
+  await db.query("update ingestion_runs set apify_run_id = $2, status = 'running' where id = $1", [id, apifyRunId]);
 }
 
 export async function getRunByApifyId(db: Db, apifyRunId: string) {
@@ -36,7 +49,7 @@ export async function getRunByApifyId(db: Db, apifyRunId: string) {
   return r.rows[0] ?? null;
 }
 
-export async function setRunStatus(db: Db, id: string, status: "running" | "fetching" | "done" | "failed"): Promise<void> {
+export async function setRunStatus(db: Db, id: string, status: "starting" | "running" | "fetching" | "done" | "failed"): Promise<void> {
   await db.query(
     `update ingestion_runs set status = $2, completed_at = case when $2 in ('done','failed') then now() else completed_at end where id = $1`,
     [id, status],

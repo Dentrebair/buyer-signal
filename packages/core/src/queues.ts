@@ -25,12 +25,13 @@ export const StartBoardRun = z.object({
 export type StartBoardRun = z.infer<typeof StartBoardRun>;
 
 // Sent by the webhook route and by the poll job; the worker reads the run itself.
-export const ApifyRunEvent = z.object({ apifyRunId: z.string().min(5).max(40) });
+const ApifyId = z.string().regex(/^[A-Za-z0-9]{5,40}$/); // used in Apify API paths
+export const ApifyRunEvent = z.object({ apifyRunId: ApifyId });
 export type ApifyRunEvent = z.infer<typeof ApifyRunEvent>;
 
 export const FetchDataset = z.object({
   runId: z.uuid(),
-  datasetId: z.string().min(5).max(40),
+  datasetId: ApifyId,
   offset: z.number().int().min(0),
 });
 export type FetchDataset = z.infer<typeof FetchDataset>;
@@ -55,5 +56,3 @@ export const ExtractLlm = z.object({
   founderDependency: z.boolean(), // §6.6 deterministic override from the gate
 });
 export type ExtractLlm = z.infer<typeof ExtractLlm>;
-
-export const DeadLetter = z.object({ queue: z.string(), data: z.unknown(), error: z.string() });

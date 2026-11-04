@@ -83,5 +83,7 @@ describe("names", () => {
   it("extracts bare domains", () => {
     expect(bareDomain("https://www.SmartDocsNow.com/about")).toBe("smartdocsnow.com");
     expect(bareDomain("not a url")).toBeNull();
+    expect(bareDomain('evil.com"><script>')).toBeNull(); // hostname characters only
+    expect(bareDomain("javascript:alert(1)")).toBeNull();
   });
 });

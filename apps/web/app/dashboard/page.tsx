@@ -1,7 +1,7 @@
 // Triage inbox (PRD §10.1, Q67): queues + filters | ranked list | dossier.
 import Link from "next/link";
 import { ArrowLeft, ArrowSquareOut, ChartBar, Files, Fire, Flask, Hourglass, Info, Lightning, Percent, Repeat, Robot, Warning, X } from "@phosphor-icons/react/ssr";
-import type { ScoreBreakdown, StructuredIntelligence } from "@bs/core";
+import { type ScoreBreakdown, type StructuredIntelligence, boardColumn, sourceFamily } from "@bs/core";
 import { ActionBar } from "@/components/ActionBar.tsx";
 import { FamilyIcon } from "@/components/FamilyIcon.tsx";
 import { FilterSelect } from "@/components/Filters.tsx";
@@ -170,7 +170,9 @@ function ListRow({ row, href, current }: { row: Row; href: string; current: bool
   );
 }
 
-const tier = (score: number) => (score > 70 ? "triage" : score >= 50 ? "nurture" : "hidden");
+// Colour tier from the same thresholds as the queues (§10.1).
+// With status "new", boardColumn only returns a score tier.
+const tier = (score: number) => boardColumn(score, "new") as "triage" | "nurture" | "hidden";
 
 function Dossier({ company: c, view, nextHref, selfHref }: { company: Company; view: View; nextHref: string; selfHref: string }) {
   const b = c.score_breakdown;
@@ -259,7 +261,7 @@ function Dossier({ company: c, view, nextHref, selfHref }: { company: Company; v
             <ul className="evidence">
               {c.challenges.map((ch) => {
                 const [title, ...rest] = ch.evidence_snippet.split("\n\n");
-                const family = ch.source_type === "dom_sniff" || ch.source_type === "tech_stack" ? "website" : ch.source_type;
+                const family = sourceFamily(ch.source_type);
                 return (
                   <li key={ch.id} className="card ev">
                     <div className="ev-head">
@@ -268,7 +270,7 @@ function Dossier({ company: c, view, nextHref, selfHref }: { company: Company; v
                     </div>
                     <p className="ev-meta">
                       {SOURCE_LABEL[ch.source_type]} · {ageLabel(ch.posted_at)} · signal <span className="num">{ch.signal_score}</span>
-                      {ch.source_url && (
+                      {ch.source_url && /^https?:\/\//i.test(ch.source_url) && (
                         <>
                           {" · "}
                           <a href={ch.source_url} target="_blank" rel="noopener noreferrer" className="link">

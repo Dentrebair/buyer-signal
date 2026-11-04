@@ -31,11 +31,13 @@ import {
   claimRun,
   createRun,
   getRunByApifyId,
+  getRunByJobKey,
   insertChallenge,
   insertSeedUrl,
   markSeen,
   reconcileApifyCycle,
   recomputeCompanyScore,
+  recordApifyRun,
   reserveApifyRun,
   seedApifyCycle,
   setRunStatus,
@@ -50,7 +52,13 @@ export interface Settings {
   apifyCycleCapUsd: number;
 }
 
-export type Send = (queue: QueueName, data: object, opts?: { startAfter?: number; singletonKey?: string }) => Promise<unknown>;
+// `tx`: enqueue inside that transaction, so the job exists only if the transaction commits.
+export type Send = (
+  queue: QueueName,
+  data: object,
+  opts?: { startAfter?: number; singletonKey?: string },
+  tx?: pg.PoolClient,
+) => Promise<unknown>;
 
 export interface Deps {
   pool: pg.Pool;
@@ -67,29 +75,48 @@ const PLAN = { pricePerItem: INDEED_PRICES["apify-default-dataset-item"], startP
 const DEFER_SECONDS = 3600; // over cap → try again in an hour (§5.3)
 
 // ── start-board-run ─────────────────────────────────────────────────────────
-export async function startBoardRun(d: Deps, job: StartBoardRun): Promise<{ started: string } | { deferred: true }> {
+// `jobKey` (the pg-boss job id) makes a retry of the same job never start a second paid run.
+export async function startBoardRun(
+  d: Deps,
+  job: StartBoardRun,
+  jobKey: string,
+): Promise<{ started: string } | { deferred: true } | { skipped: string }> {
+  const prior = await getRunByJobKey(d.pool, jobKey);
+  if (prior?.apify_run_id) return { started: prior.apify_run_id };
+  if (prior) {
+    // An earlier attempt crashed between starting Apify and recording it: it may or may not have
+    // started, so never start another. The daily reconcile corrects the spend counter.
+    await setRunStatus(d.pool, prior.id, "failed");
+    d.log("start-board-run: earlier attempt unconfirmed; not starting again", { jobKey });
+    return { skipped: "unconfirmed earlier attempt" };
+  }
+
   const usage = await d.apify.usage();
   const plan = { maxItems: job.limit, ...PLAN };
   const worst = worstCaseApifyCost(plan);
+  const release = () =>
+    d.pool.query("update spend_counters set total_usd = greatest(0, total_usd - $2) where key = $1", [apifyCycleKey(usage.cycleStart), worst]);
   await seedApifyCycle(d.pool, usage.cycleStart, usage.usageUsd, d.settings.apifyCycleCapUsd);
   if (!(await reserveApifyRun(d.pool, usage.cycleStart, worst, d.settings.apifyCycleCapUsd))) {
     d.log("apify cycle cap reached; deferring run", { worst, cap: d.settings.apifyCycleCapUsd });
     await d.send(Q.startBoardRun, job, { startAfter: DEFER_SECONDS });
     return { deferred: true };
   }
+  const runId = await createRun(d.pool, { jobKey, jobType: "indeed", vertical: job.vertical, country: job.country, estimatedCostUsd: worst });
+  if (!runId) {
+    await release(); // a concurrent attempt owns this key
+    return { skipped: "concurrent attempt" };
+  }
   let apifyRunId: string;
   try {
-    const run = await d.apify.startRun(INDEED_ACTOR, indeedInput({ ...job, datePosted: "14" }), {
-      maxItems: job.limit,
-      maxTotalChargeUsd: apifyChargeCap(plan),
-    });
-    apifyRunId = run.id;
+    apifyRunId = (await d.apify.startRun(INDEED_ACTOR, indeedInput({ ...job, datePosted: "14" }), { maxItems: job.limit, maxTotalChargeUsd: apifyChargeCap(plan) })).id;
   } catch (e) {
-    // Nothing was started: give the reservation back.
-    await d.pool.query("update spend_counters set total_usd = greatest(0, total_usd - $2) where key = $1", [apifyCycleKey(usage.cycleStart), worst]);
+    // Apify refused or was unreachable: nothing started, so undo both and let pg-boss retry.
+    await d.pool.query("delete from ingestion_runs where id = $1", [runId]);
+    await release();
     throw e;
   }
-  await createRun(d.pool, { jobType: "indeed", vertical: job.vertical, country: job.country, apifyRunId, estimatedCostUsd: worst });
+  await recordApifyRun(d.pool, runId, apifyRunId);
   d.log("apify run started", { apifyRunId, title: job.title, country: job.country, worst });
   return { started: apifyRunId };
 }
@@ -103,13 +130,17 @@ export async function onApifyRunEvent(d: Deps, job: ApifyRunEvent): Promise<stri
   if (!TERMINAL.includes(run.status)) return `still ${run.status}`;
 
   const ok = run.status === "SUCCEEDED";
-  if (!(await claimRun(d.pool, row.id, ok ? "fetching" : "failed"))) return "already handled";
   const usage = await d.apify.usage();
   const actual = runCostUsd(run, INDEED_PRICES);
-  await withTransaction(d.pool, (c) =>
-    settleApifyRun(c, { cycleStart: usage.cycleStart, reservedUsd: Number(row.estimated_cost_usd), actualUsd: actual, runId: row.id, ref: run.id }),
-  );
-  if (ok) await d.send(Q.fetchDataset, { runId: row.id, datasetId: run.defaultDatasetId, offset: 0 } satisfies FetchDataset);
+  // Claim, settle and enqueue the fetch in one transaction: a crash leaves the run 'running'
+  // for the next poll, never 'fetching' with no fetch job.
+  const claimed = await withTransaction(d.pool, async (c) => {
+    if (!(await claimRun(c, row.id, ok ? "fetching" : "failed"))) return false;
+    await settleApifyRun(c, { cycleStart: usage.cycleStart, reservedUsd: Number(row.estimated_cost_usd), actualUsd: actual, runId: row.id, ref: run.id });
+    if (ok) await d.send(Q.fetchDataset, { runId: row.id, datasetId: run.defaultDatasetId, offset: 0 } satisfies FetchDataset, undefined, c);
+    return true;
+  });
+  if (!claimed) return "already handled";
   d.log("apify run finished", { apifyRunId: run.id, status: run.status, costUsd: actual });
   return run.status;
 }
@@ -133,25 +164,23 @@ export async function fetchDataset(d: Deps, job: FetchDataset): Promise<Partial<
       inc("dropped_stale_count");
       continue;
     }
-    if (!(await markSeen(d.pool, post.naturalId))) {
-      inc("dropped_dedup_count");
-      continue;
-    }
+    // Mark seen and enqueue in one transaction: a crash in between must not leave a post
+    // marked seen but never extracted (a retry would then drop it as a duplicate).
     const gate = gateJobPost(post);
-    if (!gate.pass) {
-      inc(gate.reason === "recruiter" ? "dropped_recruiter_count" : "dropped_trie_count");
-      continue;
-    }
-    if (!post.company) {
-      inc("dropped_unresolved_count"); // nothing to resolve a website from
-      continue;
-    }
-    await d.send(Q.extractLlm, {
-      runId: job.runId,
-      vertical: run.vertical as ExtractLlm["vertical"],
-      post: { ...post, postedAt: post.postedAt?.toISOString() ?? null },
-      founderDependency: gate.founderDependency,
-    } satisfies ExtractLlm);
+    const outcome = await withTransaction(d.pool, async (c): Promise<DropCounter | "sent"> => {
+      if (!(await markSeen(c, post.naturalId))) return "dropped_dedup_count";
+      if (!gate.pass) return gate.reason === "recruiter" ? "dropped_recruiter_count" : "dropped_trie_count";
+      if (!post.company) return "dropped_unresolved_count"; // nothing to resolve a website from
+      const payload: ExtractLlm = {
+        runId: job.runId,
+        vertical: run.vertical as ExtractLlm["vertical"],
+        post: { ...post, postedAt: post.postedAt?.toISOString() ?? null },
+        founderDependency: gate.founderDependency,
+      };
+      await d.send(Q.extractLlm, payload, undefined, c);
+      return "sent";
+    });
+    if (outcome !== "sent") inc(outcome);
   }
   await bumpCounters(d.pool, job.runId, counts);
   if (items.length === PAGE) await d.send(Q.fetchDataset, { ...job, offset: job.offset + PAGE } satisfies FetchDataset);

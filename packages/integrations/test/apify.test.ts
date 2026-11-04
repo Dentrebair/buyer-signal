@@ -19,8 +19,9 @@ describe("Indeed mapping (verified fields)", () => {
     expect(JSON.stringify(p)).not.toContain("[removed]");
   });
 
-  it("rejects items without key, url or title", () => {
+  it("rejects items without key, url or title, and non-http links", () => {
     expect(mapIndeedItem({ title: "x" }, "us")).toBeNull();
+    expect(mapIndeedItem({ ...items[1], url: "javascript:alert(1)" }, "us")).toBeNull();
   });
 });
 

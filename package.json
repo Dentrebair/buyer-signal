@@ -10,7 +10,7 @@
     "node": ">=22.12.0"
   },
   "scripts": {
-    "dev": "next dev apps/web",
+    "dev": "next dev -H 127.0.0.1 apps/web",
     "build": "next build apps/web",
     "typecheck": "tsc -b && tsc -p apps/web",
     "test": "node --env-file-if-exists=.env.local node_modules/vitest/vitest.mjs run",

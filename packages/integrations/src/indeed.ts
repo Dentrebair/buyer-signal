@@ -29,7 +29,7 @@ interface IndeedItem {
 // Personal fields (ceoName, street address, contact details) are never copied (§6.5).
 export function mapIndeedItem(raw: unknown, country: IndeedCountry): RawJobPost | null {
   const it = raw as IndeedItem;
-  if (!it?.key || !it.url || !it.title) return null;
+  if (!it?.key || !it.url || !it.title || !/^https?:\/\//i.test(it.url)) return null; // no javascript: or data: links
   const posted = it.datePublished ? new Date(it.datePublished) : null;
   return {
     naturalId: `job:indeed:${it.key}`,

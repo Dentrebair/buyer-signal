@@ -30,7 +30,8 @@ const deps: Deps = {
   pool,
   apify: new ApifyClient(),
   llm: gatedLlm(pool, new OpenRouterClient(), { monthlyCapUsd: env.MONTHLY_CAP_USD }),
-  send: (queue, data, opts) => boss.send(queue, data, opts ?? {}),
+  send: (queue, data, opts, tx) =>
+    boss.send(queue, data, { ...opts, ...(tx ? { db: { executeSql: (text: string, values?: unknown[]) => tx.query(text, values) } } : {}) }),
   settings: { apifyCycleCapUsd: env.APIFY_CYCLE_CAP_USD },
   now: () => new Date(),
   log,
@@ -44,7 +45,7 @@ interface QueueDef<T> {
   concurrency: number;
   expireInSeconds: number;
   schema: z.ZodType<T>;
-  run: (d: Deps, data: T) => Promise<unknown>;
+  run: (d: Deps, data: T, jobId: string) => Promise<unknown>;
 }
 
 const queues: QueueDef<any>[] = [
@@ -65,9 +66,8 @@ async function main() {
     await boss.createQueue(q.name, { ...RETRY, expireInSeconds: q.expireInSeconds }).catch(ignoreExists);
     await boss.work(q.name, { localConcurrency: q.concurrency }, async ([job]) => {
       if (!job) return;
-      const data = q.schema.parse(job.data);
       try {
-        const result = await q.run(deps, data);
+        const result = await q.run(deps, q.schema.parse(job.data), job.id);
         log("job done", { queue: q.name, id: job.id, result });
         return result;
       } catch (e) {
@@ -77,11 +77,13 @@ async function main() {
           log("deferred: budget cap", { queue: q.name, key: e.key });
           return { deferred: true };
         }
-        if (e instanceof ProviderError && !e.retryable) {
-          // Bad input or invalid output after the client's own retry: fail now, don't retry (§5.3a).
-          await boss.send(Q.deadLetter, { queue: q.name, data: job.data, error: e.message });
-          log("job failed (not retryable)", { queue: q.name, id: job.id, error: e.message });
-          return { failed: e.message };
+        if ((e instanceof ProviderError && !e.retryable) || e instanceof z.ZodError) {
+          // Bad input (invalid payload, 4xx) or invalid output after the client's own retry:
+          // fail now, don't retry (§5.3a).
+          const error = e instanceof z.ZodError ? `invalid payload: ${z.prettifyError(e)}` : e.message;
+          await boss.send(Q.deadLetter, { queue: q.name, data: job.data, error });
+          log("job failed (not retryable)", { queue: q.name, id: job.id, error });
+          return { failed: error };
         }
         log("job error (will retry)", { queue: q.name, id: job.id, retry: job.retryCount, ...describe(e) });
         throw e;

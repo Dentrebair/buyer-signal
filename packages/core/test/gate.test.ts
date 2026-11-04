@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { gateJobPost, matchAtoms } from "../src/index.ts";
+import { ApifyRunEvent, gateJobPost, matchAtoms } from "../src/index.ts";
 
 describe("gate-job-post (§5.1 step 3)", () => {
   it("passes a desk role with ≥ 2 work atoms", () => {
@@ -32,5 +32,12 @@ describe("gate-job-post (§5.1 step 3)", () => {
     expect(matchAtoms("sapphire glass")).toEqual([]);
     expect(matchAtoms("SAP and reconciliation").map((m) => m.atom)).toEqual(["reconcil*", "sap"]);
     expect(matchAtoms("a sop and SOPs").filter((m) => m.atom === "sop*")).toHaveLength(1);
+  });
+});
+
+describe("queue payloads", () => {
+  it("Apify ids are alphanumeric only (they go into API paths)", () => {
+    expect(ApifyRunEvent.safeParse({ apifyRunId: "HH6wvHiNczKR1M62O" }).success).toBe(true);
+    expect(ApifyRunEvent.safeParse({ apifyRunId: "../acts/x/runs" }).success).toBe(false);
   });
 });

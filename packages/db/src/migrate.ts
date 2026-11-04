@@ -10,6 +10,8 @@ const dir = fileURLToPath(new URL("../migrations/", import.meta.url));
 async function main() {
   const pool = createPool(1);
   try {
+    // One migrator at a time (web and worker may deploy together); released when the pool closes.
+    await pool.query("select pg_advisory_lock(hashtext('bs:schema_migrations'))");
     await pool.query(`create table if not exists schema_migrations (
       name text primary key, checksum text not null, applied_at timestamptz not null default now())`);
     await pool.query("alter table schema_migrations enable row level security");
