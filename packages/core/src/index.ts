@@ -9,3 +9,6 @@ export * from "./verticals.ts";
 export * from "./extraction.ts";
 export * from "./gate.ts";
 export * from "./queues.ts";
+export * from "./resolve.ts";
+export * from "./techstack.ts";
+export * from "./website.ts";

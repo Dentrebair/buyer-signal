@@ -1,5 +1,6 @@
 // Inbox queries (PRD §10.1). Queues and filters come from the URL so a view can be bookmarked.
 import type { ScoreBreakdown, SizeTier, SourceFamily, SourceType, StructuredIntelligence } from "@bs/core";
+import type { AuditCompany } from "@/components/WebsiteAudit.tsx";
 import { asOperator } from "./operator.ts";
 
 export const QUEUES = ["triage", "nurture", "sent", "rejected"] as const;
@@ -50,7 +51,7 @@ const QUEUE_SQL: Record<Queue, string> = {
 
 export interface Row {
   id: string;
-  domain: string;
+  domain: string | null; // null = no website found
   company_name: string | null;
   vertical: string | null;
   country: string | null;
@@ -85,7 +86,14 @@ export interface Company extends Row {
   rejection_reason: string | null;
   employee_band: string | null;
   size_source: string | null;
-  tech_stack: string[];
+  tech_stack: AuditCompany["tech_stack"];
+  reachable: boolean | null;
+  is_client_rendered: boolean;
+  last_sniffed_at: string | null;
+  web_ui_audit_flags: AuditCompany["web_ui_audit_flags"];
+  contact_email: string | null;
+  contact_whatsapp: string | null;
+  contact_source_url: string | null;
   actioned_at: string | null;
   challenges: Challenge[];
 }

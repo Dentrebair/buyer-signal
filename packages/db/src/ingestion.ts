@@ -14,7 +14,8 @@ export type DropCounter =
   | "dropped_size_count"
   | "dropped_stance_count"
   | "dropped_no_fit_count"
-  | "llm_persisted_count";
+  | "llm_persisted_count"
+  | "persisted_no_website_count";
 
 // Written before the paid run starts (status 'starting'); null = this job key already has a row.
 export async function createRun(
@@ -70,6 +71,7 @@ export async function unfinishedRuns(db: Db, olderThanSeconds: number) {
 const COUNTERS = new Set<DropCounter>([
   "raw_items_ingested", "dropped_stale_count", "dropped_dedup_count", "dropped_trie_count", "dropped_recruiter_count",
   "dropped_unresolved_count", "dropped_size_count", "dropped_stance_count", "dropped_no_fit_count", "llm_persisted_count",
+  "persisted_no_website_count",
 ]);
 
 export async function bumpCounters(db: Db, runId: string, counts: Partial<Record<DropCounter, number>>): Promise<void> {

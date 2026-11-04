@@ -1,0 +1,28 @@
+{
+ "objectClassName": "domain",
+ "ldhName": "AUDITVISTA.COM",
+ "status": [
+  "client delete prohibited",
+  "client renew prohibited",
+  "client transfer prohibited",
+  "client update prohibited"
+ ],
+ "events": [
+  {
+   "eventAction": "registration",
+   "eventDate": "2021-07-11T06:23:41Z"
+  },
+  {
+   "eventAction": "expiration",
+   "eventDate": "2027-07-11T06:23:41Z"
+  },
+  {
+   "eventAction": "last changed",
+   "eventDate": "2026-07-16T12:42:21Z"
+  },
+  {
+   "eventAction": "last update of RDAP database",
+   "eventDate": "2026-11-04T11:31:19Z"
+  }
+ ]
+}

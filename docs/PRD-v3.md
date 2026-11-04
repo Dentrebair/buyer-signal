@@ -248,11 +248,20 @@ the next 100 pending seeds — used for testing and catching up.
    a. Board website field first (Indeed `employer.corporateWebsite`, free) → done.
    b. `domain_cache` row for `{normalized_name}:{city|vertical}`, not expired → done.
    c. Otherwise the post joins the **search queue, ordered by provisional signal score**
-      (§7). Up to `SEARCH_DAILY_CAP` (default 15) searches run per day in one batched Apify
-      run: `"<company_name>" <city> <country>`, top 10 results → LLM picks the official
-      domain or null. Cache 30 days (misses 7 days). Unresolved → drop
-      (`dropped_unresolved`). A post still unsearched when it turns 21 days old is dropped
-      as `dropped_stale` (§4.3).
+      (§7). Up to `SEARCH_DAILY_CAP` (default 15) searches run per day (`resolve-batch`,
+      04:00 UTC) through OpenRouter web search (Q62): `"<company_name>" <city> <country>`,
+      top 10 results → LLM picks the official domain or null; a domain no result is on is a
+      miss. An unsure pick (low confidence, or a cited domain spelling the company name) gets
+      a free homepage check: exactly one candidate page must name the company and its city,
+      or name a 2+-word company whose domain spells it; ambiguous → miss. Cache 30 days
+      (misses 7 days). A post still unsearched when it turns 21 days old leaves the queue.
+   d. **No website is still a lead** (decided 2026-11-04). The card is created at extraction,
+      before any search, marked **"No website"** and keyed on
+      `name_key = <country>:<normalized name>:<city>`; a website found later (search, or a
+      later post's board field) is attached to the same card, or the card is folded into the
+      company that already owns that domain. No-website cards get no website sniff, and the
+      pitch is the hiring need in the post, never website work (§9). Only posts with no
+      company name at all are dropped (`dropped_unresolved`).
 6. **Size check (§6.7)**, before the company is created: board size field, then domain age.
    Out of range → drop (`dropped_size`); the site is never scraped.
 7. **Upsert company** on `domain`; insert `seed_urls` row if new (→ website sniff, §5.4).
@@ -363,6 +372,17 @@ The system is built to slow down, not fall over. Each rule applies to every job:
 4. **DOM sniff + 4-Gate audit** (§6.4). Emit a `dom_sniff` challenge only when a pain flag is
    found (static PDF intake, raw `mailto:` instead of form, no scheduling, etc.).
 5. Recompute company score.
+
+*Built 2026-11-04 ([sprint2-sniff.md](sprint2-sniff.md)).* `sniff-seeds` cron every 10 min
+claims ≤ 20 pending seeds and sends one `sniff-domain` job each (concurrency 4); a seed stuck
+> 1 h is reclaimed, failed after 3 attempts. A homepage that redirects to another domain is
+treated as not the company's site. Fingerprints: `enthec/webappanalyzer` pinned to one commit
+(`npm run fingerprints:update`), static fields only (headers, cookies, meta, HTML, script src,
+inline scripts, DOM, text). Gate 4 is IN/UAE only (US → `automated_or_na`). "No scheduling" only
+in booking verticals (healthcare, legal, field services, automotive, education, real estate).
+`dom_sniff` = PDF intake form, email-link-only enquiries, or no booking; `tech_stack` = ≥ 3
+separate SaaS form/CRM/booking/chat/marketing tools. Gates 2–3 are audit-only. Measured on 47
+real sites: `dom_sniff` 6 %, `tech_stack` 0 %.
 
 ### 5.5 Flow C — `/roast` inbound (§8)
 
@@ -493,8 +513,11 @@ scraped**. No search is spent on size (Q56): the LinkedIn company search found a
 
    Domain age is only used to tag young companies. It never drops a company: in the
    Sprint 0 search test, ordinary SMBs had domains registered in 1997, 2002 and 2008
-   ([sprint0-search.md](sprint0-search.md)). `.ae` domains are not served by rdap.org →
-   age unknown.
+   ([sprint0-search.md](sprint0-search.md)). The worker asks each registry's own RDAP server
+   from the IANA bootstrap file (not the rdap.org relay, which returned 403 for some `.org`),
+   once per domain (the date is stored on the company). Measured 2026-11-04 on the 49 Sprint 0
+   websites: 42 dated; `.ae` and `.co` have no RDAP server → age unknown. A failed lookup
+   leaves the size unknown and never blocks the card.
 
 4. Size tags show on the card. They do not change the score.
 
@@ -569,6 +592,9 @@ visitor, then **upserts** the company on canonical domain and inserts an `inboun
 - **On demand only:** a "Generate draft" button on every card's drawer, Triage or Nurture.
   Nothing is generated automatically, and opening the drawer never triggers generation.
 - When a founder name is known (§6.5), the emails address them by name.
+- **No-website companies (§5.1 step 5d):** the emails pitch the work the job post is hiring
+  for (the manual task, the hours, the automation that replaces it), never a website or a
+  website audit; contact is through the job post.
 - **Employee-post evidence is never quoted or referred to** (§4.1a, Q61): the draft
   prompt receives it as "pattern observed", without the URL, and the prompt forbids
   mentioning a post, an employee or "your team said". Founder and company-page posts may be
@@ -667,7 +693,8 @@ create extension if not exists vector;
 
 create table companies (
   id uuid primary key default gen_random_uuid(),
-  domain text unique not null,
+  domain text unique,              -- null = no website found (migration 0005)
+  name_key text unique,            -- '<country>:<normalized name>:<city>'; domain or name_key required
   company_name text,
   vertical text,
   country text,
@@ -840,7 +867,7 @@ imagined payload.
    rate, snippet quality, cost per query, latency (Apify runs are batched). Brave account is
    created only if Brave wins. Everything in this PRD that says "Brave" means "the chosen
    search provider".
-1c. **OpenRouter web search** (Q62) as a third resolver: `web` plugin, engine Parallel
+1c. ✅ *Done 2026-11-04* — [sprint0-search.md](sprint0-search.md#q62--openrouter-web-search-run-2026-11-04): 38/60 found vs 29/60, $0.0018 per company, **adopted as the resolver**. **OpenRouter web search** (Q62) as a third resolver: `web` plugin, engine Parallel
    (turbo/fast $0.001 per request, up to 10 results; results also billed as prompt tokens)
    on the same 60 companies. Billed to OpenRouter, not Apify — if accuracy matches, company
    search moves off the Apify cap. LinkedIn post discovery stays on Apify Google Search
@@ -1104,7 +1131,7 @@ v1 load for reference: ~100 job posts/day, ~15 website searches/day, ~15 new car
 | Reddit | Apify Reddit actor (to pick, ~$0.001–0.0015/post) | No Reddit API account | Reddit's official API (needs app approval/terms review) | Volume or reliability need beyond the actor |
 | Website fetch | Own SSRF-safe fetch (homepage + 3 pages) + Cheerio; SPA guard | Free, fast, controlled | Headless browser (Playwright on the worker, Browserless) for client-rendered sites; Firecrawl / Apify website crawler | "Client-rendered site" badge on > ~25 % of cards |
 | Tech-stack detection | `enthec/webappanalyzer` fingerprints | Free, offline | Wappalyzer / BuiltWith paid APIs; HTTP Archive (Phase 2) | Detection misses matter for pitches, or licence issue for SaaS distribution |
-| Domain age | rdap.org (free) | No key | Registry-specific RDAP servers; paid WHOIS API (for `.ae` etc.) | Age tags matter and `.ae` gaps hurt |
+| Domain age | Registry RDAP servers via the IANA bootstrap (free) | No key | Paid WHOIS API (for `.ae`, `.co`) | Age tags matter and `.ae` gaps hurt |
 
 ### 18.5 AI layer
 

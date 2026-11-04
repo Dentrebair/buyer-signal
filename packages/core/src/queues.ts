@@ -1,5 +1,6 @@
 // pg-boss queue names and job payloads (PRD §5.2) — the contract between web and worker.
 import { z } from "zod";
+import { StructuredIntelligence } from "./contracts.ts";
 import { VerticalSlug } from "./verticals.ts";
 
 export const Q = {
@@ -7,6 +8,9 @@ export const Q = {
   apifyRunEvent: "apify-run-event",
   fetchDataset: "fetch-dataset",
   extractLlm: "extract-llm",
+  resolveBatch: "resolve-batch",
+  sniffSeeds: "sniff-seeds",
+  sniffDomain: "sniff-domain",
   pollRuns: "poll-runs",
   reconcileApify: "reconcile-apify",
   deadLetter: "dead-letter",
@@ -56,3 +60,11 @@ export const ExtractLlm = z.object({
   founderDependency: z.boolean(), // §6.6 deterministic override from the gate
 });
 export type ExtractLlm = z.infer<typeof ExtractLlm>;
+
+// Stored in resolve_queue.payload: everything needed to make the card once a website is found.
+export const ResolvePayload = z.object({ job: ExtractLlm, si: StructuredIntelligence, model: z.string() });
+export type ResolvePayload = z.infer<typeof ResolvePayload>;
+
+// One website sniff per seed (§5.4). The worker reads the domain and company from seed_urls.
+export const SniffDomain = z.object({ seedId: z.uuid() });
+export type SniffDomain = z.infer<typeof SniffDomain>;

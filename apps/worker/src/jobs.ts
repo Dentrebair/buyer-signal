@@ -3,18 +3,30 @@
 import type pg from "pg";
 import {
   type ApifyRunEvent,
+  type DomainAge,
   type ExtractLlm,
   type FetchDataset,
   type LlmClient,
   type QueueName,
   type RawJobPost,
   type StartBoardRun,
+  type StructuredIntelligence,
+  MAX_SIGNAL_AGE_DAYS,
   Q,
+  ResolvePayload,
+  type SniffDomain,
+  type VerticalSlug,
+  type Country,
+  websiteSignals,
+  acceptResolved,
+  homepageCandidates,
+  pickHomepage,
   apifyChargeCap,
   apifyCycleKey,
   bareDomain,
   blastRadius,
   buildJobExtraction,
+  buildResolve,
   checkFreshness,
   classifySize,
   domainCacheKey,
@@ -30,6 +42,12 @@ import {
   cachedDomain,
   claimRun,
   createRun,
+  enqueueResolve,
+  expireStaleResolves,
+  finishResolve,
+  markSearched,
+  pendingResolves,
+  searchesToday,
   getRunByApifyId,
   getRunByJobKey,
   insertChallenge,
@@ -41,15 +59,21 @@ import {
   reserveApifyRun,
   seedApifyCycle,
   setRunStatus,
+  claimSeeds,
+  finishSeed,
+  saveSniff,
+  seedTarget,
+  storedRegisteredAt,
   settleApifyRun,
   unfinishedRuns,
   upsertCompany,
   withTransaction,
 } from "@bs/db";
-import { type ApifyClient, INDEED_ACTOR, INDEED_PRICES, TERMINAL, indeedInput, mapIndeedItem, runCostUsd } from "@bs/integrations";
+import { type ApifyClient, type Page, type SniffInput, type SniffResult, INDEED_ACTOR, INDEED_PRICES, TERMINAL, indeedInput, mapIndeedItem, pageText, runCostUsd } from "@bs/integrations";
 
 export interface Settings {
   apifyCycleCapUsd: number;
+  searchDailyCap: number; // SEARCH_DAILY_CAP: paid website searches per UTC day (§5.1 step 5c)
 }
 
 // `tx`: enqueue inside that transaction, so the job exists only if the transaction commits.
@@ -64,6 +88,9 @@ export interface Deps {
   pool: pg.Pool;
   apify: Pick<ApifyClient, "startRun" | "getRun" | "datasetItems" | "usage">;
   llm: LlmClient;
+  fetchPage: (url: string) => Promise<Page | null>;
+  rdap: DomainAge;
+  sniff: (x: SniffInput) => Promise<SniffResult>;
   send: Send;
   settings: Settings;
   now: () => Date;
@@ -190,7 +217,7 @@ export async function fetchDataset(d: Deps, job: FetchDataset): Promise<Partial<
 
 // ── extract-llm → resolve → size → upsert + score ───────────────────────────
 export async function extractLlm(d: Deps, job: ExtractLlm): Promise<string> {
-  const post: RawJobPost = { ...job.post, postedAt: job.post.postedAt ? new Date(job.post.postedAt) : null };
+  const post = toPost(job);
   const out = await d.llm.json("extraction", buildJobExtraction({ title: post.title, company: post.company, location: post.city, description: post.description }));
   const si = out.data;
 
@@ -198,25 +225,65 @@ export async function extractLlm(d: Deps, job: ExtractLlm): Promise<string> {
   const size = classifySize({ employeeBand: post.boardEmployeeBand, bandSource: "job_board", knownLargeBrand: si.known_large_brand, now: d.now() });
   if (!size.keep) return drop(d, job.runId, "dropped_size_count");
 
-  // Resolve (§5.1 step 5): board website, then cache. The daily search quota arrives in Sprint 2;
-  // until then a post with neither is dropped as unresolved.
+  // Resolve (§5.1 step 5): board website (free), then cache. Unknown → the card is made now,
+  // marked "No website", and the post joins the search queue; a website found later is attached.
   const cacheKey = domainCacheKey(post.company!, post.city);
-  let domain = bareDomain(post.boardWebsite);
-  if (domain) await cacheDomain(d.pool, cacheKey, domain);
-  else domain = (await cachedDomain(d.pool, cacheKey)) ?? null;
-  if (!domain) return drop(d, job.runId, "dropped_unresolved_count");
+  const boardDomain = bareDomain(post.boardWebsite);
+  if (boardDomain) await cacheDomain(d.pool, cacheKey, boardDomain);
+  const domain = boardDomain ?? (await cachedDomain(d.pool, cacheKey));
+  const payload: ResolvePayload = { job, si, model: out.model };
+  if (domain === undefined) {
+    await enqueueResolve(d.pool, {
+      naturalId: post.naturalId,
+      runId: job.runId,
+      cacheKey,
+      company: post.company!,
+      city: post.city,
+      country: post.country,
+      score: provisionalScore(si, job.founderDependency),
+      postedAt: post.postedAt,
+      payload,
+    });
+  }
+  await persistCard(d, payload, domain ?? null);
+  return domain ? `persisted ${domain}` : domain === null ? "persisted (no website)" : "persisted (no website yet, queued for search)";
+}
 
+function toPost(job: ExtractLlm): RawJobPost {
+  return { ...job.post, postedAt: job.post.postedAt ? new Date(job.post.postedAt) : null };
+}
+
+function provisionalScore(si: StructuredIntelligence, founderDependency: boolean): number {
+  return signalScore("job_post", weightsFor("job_post"), blastRadius(si.blast_radius, founderDependency));
+}
+
+// Upsert company + challenge + score + seed in one transaction (§5.1 steps 7–8). Safe to run
+// twice: the challenge is keyed on the post, so a retry adds nothing. domain null = no website:
+// the company is keyed on its name and gets no website sniff.
+async function persistCard(d: Deps, x: ResolvePayload, domain: string | null): Promise<void> {
+  const { job, si } = x;
+  const post = toPost(job);
+  const sizeOf = (domainRegisteredAt: Date | null) =>
+    classifySize({ employeeBand: post.boardEmployeeBand, bandSource: "job_board", knownLargeBrand: si.known_large_brand, domainRegisteredAt, now: d.now() });
+  let size = sizeOf(null);
+  if (!size.keep) throw new Error("persistCard: size is checked before a post gets here"); // same inputs, same result
+  // §6.7 step 2: domain age only when the employee count is unknown. It only adds a tag, never drops.
+  const registeredAt = domain && size.tier === "unknown" ? await domainAge(d, domain) : null;
+  if (registeredAt) size = sizeOf(registeredAt);
+  if (!size.keep) throw new Error("persistCard: domain age never drops a company");
   const w = weightsFor("job_post");
   const B = blastRadius(si.blast_radius, job.founderDependency);
   await withTransaction(d.pool, async (c) => {
     const companyId = await upsertCompany(c, {
       domain,
+      nameKey: `${post.country}:${domainCacheKey(post.company!, post.city)}`,
       companyName: post.company,
       vertical: job.vertical,
       country: post.country,
       employeeBand: post.boardEmployeeBand,
       sizeTier: size.tier,
       sizeSource: size.source,
+      domainRegisteredAt: registeredAt,
     });
     const inserted = await insertChallenge(c, {
       companyId,
@@ -231,20 +298,135 @@ export async function extractLlm(d: Deps, job: ExtractLlm): Promise<string> {
       postedAt: post.postedAt,
       evidenceSnippet: `${post.title}\n\n${post.description}`,
       structuredIntelligence: job.founderDependency ? { ...si, blast_radius: { ...si.blast_radius, founder_dependency_flag: true } } : si,
-      llmModel: out.model,
+      llmModel: x.model,
     });
-    if (inserted) {
-      await recomputeCompanyScore(c, companyId);
-      await insertSeedUrl(c, domain!, companyId, "job_post");
-      await bumpCounters(c, job.runId, { llm_persisted_count: 1 });
-    }
+    // Always: a website attached later can fold another card's challenges into this company.
+    await recomputeCompanyScore(c, companyId);
+    if (domain) await insertSeedUrl(c, domain, companyId, "job_post");
+    if (inserted) await bumpCounters(c, job.runId, domain ? { llm_persisted_count: 1 } : { llm_persisted_count: 1, persisted_no_website_count: 1 });
   });
-  return `persisted ${domain}`;
+}
+
+// Stored date first, so each domain is asked once. A failed lookup leaves the age unknown.
+async function domainAge(d: Deps, domain: string): Promise<Date | null> {
+  const stored = await storedRegisteredAt(d.pool, domain);
+  if (stored) return stored;
+  try {
+    return await d.rdap.registeredAt(domain);
+  } catch (e) {
+    d.log("rdap lookup failed; size stays unknown", { domain, error: (e as Error).message });
+    return null;
+  }
+}
+
+// ── resolve-batch: daily website search, best provisional score first (§5.1 step 5c) ──
+// Every queued post already has a "No website" card; this attaches the website when found.
+export async function resolveBatch(d: Deps): Promise<{ stale: number; cached: number; searched: number; resolved: number; noWebsite: number }> {
+  const now = d.now();
+  const stats = { stale: 0, cached: 0, searched: 0, resolved: 0, noWebsite: 0 };
+  // §4.3: a post still unsearched at 21 days old is no longer searched (its card stays).
+  stats.stale = (await expireStaleResolves(d.pool, now, MAX_SIGNAL_AGE_DAYS)).length;
+
+  let quota = d.settings.searchDailyCap - (await searchesToday(d.pool, now));
+  // Read a few more than the quota: rows answered by the cache cost nothing.
+  for (const row of await pendingResolves(d.pool, Math.max(quota, 0) + 50)) {
+    const payload = ResolvePayload.parse(row.payload);
+    let domain = await cachedDomain(d.pool, row.cache_key); // an earlier row may have resolved this company
+    if (domain === undefined) {
+      if (quota <= 0) continue;
+      quota--;
+      stats.searched++;
+      const out = await d.llm.json("resolve", buildResolve({ company: row.company_name, city: row.city, country: row.country }));
+      await markSearched(d.pool, row.natural_id, now);
+      domain = acceptResolved(out.data, out.citations ?? []) ?? (await checkHomepages(d, homepageCandidates(out.data, out.citations ?? [], row.company_name), row));
+      await cacheDomain(d.pool, row.cache_key, domain); // before the card: a crash here never pays twice
+    } else stats.cached++;
+
+    await persistCard(d, payload, domain);
+    if (await finishResolve(d.pool, row.natural_id, domain ? "resolved" : "unresolved", now)) {
+      if (domain) stats.resolved++;
+      else stats.noWebsite++;
+    }
+  }
+  return stats;
+}
+
+// Free check for candidates the model was unsure of: the homepage must name the company.
+async function checkHomepages(d: Deps, candidates: string[], row: { company_name: string; city: string | null }): Promise<string | null> {
+  const pages: { domain: string; text: string }[] = [];
+  for (const domain of candidates) {
+    const page = await d.fetchPage(`https://${domain}/`);
+    if (page) pages.push({ domain, text: pageText(page.html) });
+  }
+  return pickHomepage(pages, row.company_name, row.city);
 }
 
 async function drop(d: Deps, runId: string, counter: DropCounter): Promise<string> {
   await bumpCounters(d.pool, runId, { [counter]: 1 });
   return counter;
+}
+
+// ── sniff-seeds: every 10 min, pending seeds → one sniff-domain job each (§4.2) ──
+const SNIFF_BATCH = 20;
+export async function sniffSeeds(d: Deps): Promise<number> {
+  return withTransaction(d.pool, async (c) => {
+    const seeds = await claimSeeds(c, SNIFF_BATCH);
+    // Same transaction: a job exists only if its claim committed.
+    for (const s of seeds) await d.send(Q.sniffDomain, { seedId: s.id } satisfies SniffDomain, { singletonKey: s.id }, c);
+    return seeds.length;
+  });
+}
+
+// ── sniff-domain: fetch + tech stack + 4-Gate, then website challenges (§5.4) ──
+export async function sniffDomain(d: Deps, job: SniffDomain): Promise<string> {
+  const seed = await seedTarget(d.pool, job.seedId);
+  if (!seed) return "seed gone";
+  if (!seed.company_id) {
+    await finishSeed(d.pool, job.seedId, "failed", "no company");
+    return "no company";
+  }
+  const companyId = seed.company_id;
+  const res = await d.sniff({ domain: seed.domain, company: seed.company_name, vertical: seed.vertical as VerticalSlug | null, country: seed.country as Country | null, now: d.now() });
+  if (!res.reachable) {
+    await withTransaction(d.pool, async (c) => {
+      await saveSniff(c, companyId, { reachable: false, audit: { unreachable: res.reason } });
+      await finishSeed(c, job.seedId, "unreachable", res.reason);
+    });
+    return `unreachable ${seed.domain}`;
+  }
+  const signals = websiteSignals(res.audit, res.tech);
+  await withTransaction(d.pool, async (c) => {
+    await saveSniff(c, companyId, {
+      reachable: true,
+      clientRendered: res.audit.clientRendered,
+      techStack: res.tech,
+      audit: { ...res.audit, pages: res.pages },
+      contactEmail: res.audit.contacts.emails[0] ?? null,
+      contactWhatsapp: res.audit.contacts.whatsapp[0] ?? null,
+      contactSourceUrl: res.audit.contacts.sourceUrl,
+    });
+    for (const sig of signals) {
+      const w = weightsFor(sig.sourceType);
+      await insertChallenge(c, {
+        companyId,
+        sourceType: sig.sourceType,
+        naturalId: `site:${seed.domain}:${sig.sourceType}`,
+        sourceUrl: res.finalUrl,
+        E: w.E,
+        I: w.I,
+        B: 0, // §7: website signals carry no blast radius
+        signalScore: signalScore(sig.sourceType, w, 0),
+        department: "Unknown",
+        postedAt: d.now(),
+        evidenceSnippet: sig.evidence,
+        structuredIntelligence: null,
+        llmModel: null,
+      });
+    }
+    await recomputeCompanyScore(c, companyId);
+    await finishSeed(c, job.seedId, "done");
+  });
+  return `sniffed ${seed.domain}: ${res.tech.length} tech, ${signals.map((s) => s.sourceType).join("+") || "no website signal"}`;
 }
 
 // ── poll-runs: webhook safety net, and the only path locally (Apify can't reach localhost) ──

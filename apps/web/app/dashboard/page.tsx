@@ -1,12 +1,13 @@
 // Triage inbox (PRD §10.1, Q67): queues + filters | ranked list | dossier.
 import Link from "next/link";
-import { ArrowLeft, ArrowSquareOut, ChartBar, Files, Fire, Flask, Hourglass, Info, Lightning, Percent, Repeat, Robot, Warning, X } from "@phosphor-icons/react/ssr";
+import { ArrowLeft, ArrowSquareOut, ChartBar, Files, Fire, Flask, GlobeSimpleX, Hourglass, Info, Lightning, Percent, Repeat, Robot, Warning, X } from "@phosphor-icons/react/ssr";
 import { type ScoreBreakdown, type StructuredIntelligence, boardColumn, sourceFamily } from "@bs/core";
 import { ActionBar } from "@/components/ActionBar.tsx";
 import { FamilyIcon } from "@/components/FamilyIcon.tsx";
 import { FilterSelect } from "@/components/Filters.tsx";
 import { RowLink } from "@/components/RowLink.tsx";
 import { ThemeToggle } from "@/components/ThemeToggle.tsx";
+import { WebsiteAudit } from "@/components/WebsiteAudit.tsx";
 import { type Company, type Row, type View, QUEUES, loadInbox, parseView, viewHref } from "@/lib/inbox.ts";
 import {
   FAMILY_LABEL,
@@ -149,12 +150,13 @@ function ListRow({ row, href, current }: { row: Row; href: string; current: bool
     row.country?.toUpperCase(),
     row.vertical ? VERTICAL_SHORT[row.vertical] : null,
     row.size_tier && row.size_tier !== "unknown" ? SIZE_LABEL[row.size_tier] : null,
+    row.domain ? null : "No website",
     row.hours ? `~${row.hours} h/wk` : null,
   ].filter(Boolean);
   return (
     <RowLink href={href} current={current}>
       <span className="row-top">
-        <span className="row-name">{row.company_name ?? row.domain}</span>
+        <span className="row-name">{displayName(row)}</span>
         <span className={`score-pill num tier-${tier(row.priority_score)}`}>{row.priority_score}</span>
       </span>
       {row.symptom && <span className="row-pain">{row.symptom}</span>}
@@ -169,6 +171,8 @@ function ListRow({ row, href, current }: { row: Row; href: string; current: bool
     </RowLink>
   );
 }
+
+const displayName = (r: Row) => r.company_name ?? r.domain ?? "Unnamed company";
 
 // Colour tier from the same thresholds as the queues (§10.1).
 // With status "new", boardColumn only returns a score tier.
@@ -191,11 +195,17 @@ function Dossier({ company: c, view, nextHref, selfHref }: { company: Company; v
 
           <header className="d-head">
             <div className="d-title">
-              <h2>{c.company_name ?? c.domain}</h2>
-              <a href={`https://${c.domain}`} target="_blank" rel="noopener noreferrer" className="d-domain">
-                {c.domain} <ArrowSquareOut size={13} aria-hidden />
-                <span className="sr-only">(opens in a new tab)</span>
-              </a>
+              <h2>{displayName(c)}</h2>
+              {c.domain ? (
+                <a href={`https://${c.domain}`} target="_blank" rel="noopener noreferrer" className="d-domain">
+                  {c.domain} <ArrowSquareOut size={13} aria-hidden />
+                  <span className="sr-only">(opens in a new tab)</span>
+                </a>
+              ) : (
+                <span className="d-domain no-site">
+                  <GlobeSimpleX size={14} aria-hidden /> No website
+                </span>
+              )}
               <p className="d-meta">
                 {countryLabel(c.country)} · {verticalLabel(c.vertical)} · {SIZE_LABEL[c.size_tier ?? "unknown"]}
                 {c.employee_band ? ` (${c.employee_band})` : ""}
@@ -292,12 +302,14 @@ function Dossier({ company: c, view, nextHref, selfHref }: { company: Company; v
             </ul>
           </section>
 
+          {c.domain && <WebsiteAudit company={c} />}
+
           <p className="later">
-            <Info size={14} aria-hidden /> Website audit and email drafts are added in Sprints 2–3.
+            <Info size={14} aria-hidden /> Email drafts are added in Sprint 3.
           </p>
         </article>
       </div>
-      <ActionBar id={c.id} domain={c.company_name ?? c.domain} status={c.status} nextHref={nextHref} selfHref={selfHref} />
+      <ActionBar id={c.id} domain={displayName(c)} status={c.status} nextHref={nextHref} selfHref={selfHref} />
     </>
   );
 }
@@ -326,6 +338,25 @@ function Notices({ company: c }: { company: Company }) {
       text: (
         <>
           <strong>Single signal.</strong> Nothing else confirms this pain yet — check the post before reaching out.
+        </>
+      ),
+      warn: true,
+    });
+  if (!c.domain)
+    items.push({
+      icon: <GlobeSimpleX size={14} aria-hidden />,
+      text: (
+        <>
+          <strong>No website found.</strong> Pitch the hiring need in this post, not website work. Reach them through the job post.
+        </>
+      ),
+    });
+  if (c.is_client_rendered)
+    items.push({
+      icon: <Warning size={14} aria-hidden />,
+      text: (
+        <>
+          <strong>Client-rendered site.</strong> The website audit could only see an empty page shell.
         </>
       ),
       warn: true,

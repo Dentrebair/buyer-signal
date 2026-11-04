@@ -2,16 +2,17 @@
 // Usage: npm run worker
 import { PgBoss } from "pg-boss";
 import { z } from "zod";
-import { type QueueName, ApifyRunEvent, ExtractLlm, FetchDataset, Q, StartBoardRun } from "@bs/core";
+import { type QueueName, ApifyRunEvent, ExtractLlm, FetchDataset, Q, SniffDomain, StartBoardRun } from "@bs/core";
 import { BudgetExceededError, createPool, gatedLlm } from "@bs/db";
-import { ApifyClient, OpenRouterClient, ProviderError } from "@bs/integrations";
-import { type Deps, extractLlm, fetchDataset, onApifyRunEvent, pollRuns, reconcileApify, startBoardRun } from "./jobs.ts";
+import { ApifyClient, OpenRouterClient, ProviderError, RdapClient, fetchPage, loadFingerprints, sniffWebsite } from "@bs/integrations";
+import { type Deps, extractLlm, fetchDataset, onApifyRunEvent, pollRuns, reconcileApify, resolveBatch, sniffDomain, sniffSeeds, startBoardRun } from "./jobs.ts";
 
 const env = z
   .object({
     DATABASE_URL: z.string().min(1),
     APIFY_CYCLE_CAP_USD: z.coerce.number().positive().default(4.5),
     MONTHLY_CAP_USD: z.coerce.number().positive().default(20),
+    SEARCH_DAILY_CAP: z.coerce.number().int().min(0).default(15),
   })
   .parse(process.env);
 
@@ -30,9 +31,12 @@ const deps: Deps = {
   pool,
   apify: new ApifyClient(),
   llm: gatedLlm(pool, new OpenRouterClient(), { monthlyCapUsd: env.MONTHLY_CAP_USD }),
+  fetchPage: (url) => fetchPage(url),
+  rdap: new RdapClient(),
+  sniff: (x) => sniffWebsite(x),
   send: (queue, data, opts, tx) =>
     boss.send(queue, data, { ...opts, ...(tx ? { db: { executeSql: (text: string, values?: unknown[]) => tx.query(text, values) } } : {}) }),
-  settings: { apifyCycleCapUsd: env.APIFY_CYCLE_CAP_USD },
+  settings: { apifyCycleCapUsd: env.APIFY_CYCLE_CAP_USD, searchDailyCap: env.SEARCH_DAILY_CAP },
   now: () => new Date(),
   log,
 };
@@ -53,11 +57,17 @@ const queues: QueueDef<any>[] = [
   { name: Q.apifyRunEvent, concurrency: 1, expireInSeconds: 120, schema: ApifyRunEvent, run: onApifyRunEvent },
   { name: Q.fetchDataset, concurrency: 1, expireInSeconds: 300, schema: FetchDataset, run: fetchDataset },
   { name: Q.extractLlm, concurrency: 2, expireInSeconds: 180, schema: ExtractLlm, run: extractLlm },
+  // One batch a day, so the day's best-scoring posts get the search quota (§5.1 step 5c).
+  { name: Q.resolveBatch, concurrency: 1, expireInSeconds: 900, schema: z.unknown(), run: (d) => resolveBatch(d) },
+  // Free (plain HTTP) and automatic (§4.2): pending seeds every 10 min, 4 sites at a time.
+  { name: Q.sniffSeeds, concurrency: 1, expireInSeconds: 120, schema: z.unknown(), run: (d) => sniffSeeds(d) },
+  { name: Q.sniffDomain, concurrency: 4, expireInSeconds: 120, schema: SniffDomain, run: sniffDomain },
   { name: Q.pollRuns, concurrency: 1, expireInSeconds: 120, schema: z.unknown(), run: (d) => pollRuns(d) },
   { name: Q.reconcileApify, concurrency: 1, expireInSeconds: 120, schema: z.unknown(), run: (d) => reconcileApify(d) },
 ];
 
 async function main() {
+  loadFingerprints(); // fail at start, not on the first sniff, if the data file is missing
   boss.on("error", (e) => log("pg-boss error", describe(e)));
   await boss.start();
   await boss.createQueue(Q.deadLetter, { retentionSeconds: 14 * 86400 }).catch(ignoreExists);
@@ -94,6 +104,8 @@ async function main() {
   // One cron at a time (§5.3a): pg-boss schedules are singletons per queue.
   await boss.schedule(Q.pollRuns, "*/5 * * * *");
   await boss.schedule(Q.reconcileApify, "15 3 * * *");
+  await boss.schedule(Q.resolveBatch, "0 4 * * *");
+  await boss.schedule(Q.sniffSeeds, "*/10 * * * *");
   log("worker started", { queues: queues.map((q) => q.name) });
 }
 

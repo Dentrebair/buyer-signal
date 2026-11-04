@@ -1,6 +1,6 @@
 // Provider interfaces (Q66). Business logic depends on these, never on a provider SDK.
 // Each has a real implementation in @bs/integrations and a fake in tests. Add an interface when
-// its first implementation lands (search, RDAP and website fetch arrive in Sprint 2).
+// its first implementation lands.
 
 export interface RawJobPost {
   naturalId: string; // 'job:<board>:<id>'
@@ -19,6 +19,7 @@ export interface LlmCallResult<T> {
   data: T;
   model: string;
   costUsd: number;
+  citations?: string[]; // URLs the provider's web search returned (only with `webSearch`)
 }
 
 export type LlmTask = "extraction" | "drafts" | "roast" | "resolve";
@@ -29,6 +30,7 @@ export interface LlmRequest<T> {
   schemaName: string;
   jsonSchema: object;
   parse: (raw: unknown) => T;
+  webSearch?: { maxResults: number }; // let the model search the web first (resolve, §5.1 step 5)
 }
 
 export interface LlmClient {
@@ -36,4 +38,9 @@ export interface LlmClient {
   json<T>(task: LlmTask, input: LlmRequest<T>): Promise<LlmCallResult<T>>;
   // Most the call can cost (full prompt + max output) — what the budget gate reserves (§5.3).
   worstCaseUsd(task: LlmTask, input: LlmRequest<unknown>): Promise<number>;
+}
+
+// Domain registration date (§6.7 step 2). null = unknown; throws when the registry can't be asked.
+export interface DomainAge {
+  registeredAt(domain: string): Promise<Date | null>;
 }

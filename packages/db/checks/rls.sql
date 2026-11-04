@@ -27,6 +27,8 @@ select pg_temp.try('authenticated', 'operator insert company', 'blocked', 'inser
 select pg_temp.try('authenticated', 'operator delete company', 'blocked', 'delete from companies');
 select pg_temp.try('authenticated', 'operator read seen_items', 'blocked', 'select count(*) from seen_items');
 select pg_temp.try('authenticated', 'operator read spend_counters', 'allowed', 'select count(*) from spend_counters');
+select pg_temp.try('authenticated', 'operator read resolve_queue', 'blocked', 'select count(*) from resolve_queue');
+select pg_temp.try('anon', 'anon read resolve_queue', 'blocked', 'select count(*) from resolve_queue');
 -- Status trigger (migration 0002): the inbox's Reject / Undo path, run as the operator.
 update companies set priority_score = 77, status = 'new', score_breakdown = '{"families":["job_post"]}' where domain = 'rls-test.example';
 select pg_temp.try('authenticated', 'operator lock row for action', 'allowed', 'select 1 from companies where domain = ''rls-test.example'' for update');

@@ -1,5 +1,8 @@
 // Display labels shared by server and client components.
-import { COUNTRIES, VERTICALS, type SizeTier, type SourceFamily, type SourceType } from "@bs/core";
+import type { SizeTier, SourceFamily, SourceType } from "@bs/core";
+// Values from the small entry only: this file reaches the browser, and the main entry pulls in
+// the HTML parser used by the website sniff.
+import { COUNTRIES, VERTICALS } from "@bs/core/verticals";
 
 export const REJECT_REASONS = ["wrong_company", "not_real_pain", "too_small", "already_client", "other"] as const;
 export type RejectReason = (typeof REJECT_REASONS)[number];

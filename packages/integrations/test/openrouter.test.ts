@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildJobExtraction } from "@bs/core";
+import { buildJobExtraction, buildResolve } from "@bs/core";
 import { OpenRouterClient, ProviderError } from "../src/index.ts";
 
 const env = { OPENROUTER_API_KEY: "test-key", MODEL_EXTRACTION: "anthropic/claude-haiku-5.5" };
@@ -56,6 +56,24 @@ describe("OpenRouterClient", () => {
 
     const bad = fakeFetch([new Response("bad key", { status: 401 }), completion(reply)]);
     await expect(new OpenRouterClient({ env, fetch: bad.f, retryDelaysMs: [0, 0, 0] }).json("extraction", req)).rejects.toThrow(/401/);
+  });
+
+  it("web search: sends the web plugin and returns the cited URLs", async () => {
+    const res = new Response(
+      JSON.stringify({
+        model: env.MODEL_EXTRACTION,
+        choices: [{ message: { content: JSON.stringify({ domain: "acme.com", confidence: "high" }), annotations: [{ type: "url_citation", url_citation: { url: "https://www.acme.com/about" } }] } }],
+        usage: { cost: 0.0015 },
+      }),
+    );
+    const { f, calls } = fakeFetch([res]);
+    const out = await new OpenRouterClient({ env, fetch: f }).json("resolve", buildResolve({ company: "Acme", city: "Dubai", country: "ae" }));
+    expect(out.citations).toEqual(["https://www.acme.com/about"]);
+    expect(JSON.parse(calls[0]!.body as string).plugins).toEqual([{ id: "web", engine: "parallel", mode: "fast", max_results: 10 }]);
+    // Plain calls send no plugin.
+    const plain = fakeFetch([completion(reply)]);
+    await new OpenRouterClient({ env, fetch: plain.f }).json("extraction", req);
+    expect(JSON.parse(plain.calls[0]!.body as string).plugins).toBeUndefined();
   });
 
   it("refuses to start without the task's model setting", () => {

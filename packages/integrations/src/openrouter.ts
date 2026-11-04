@@ -28,6 +28,11 @@ export interface OpenRouterOptions {
   fetch?: typeof fetch;
 }
 
+// Web search (Q62): Parallel engine, fast mode — $0.001 per request for up to 10 results; the
+// results are also billed as prompt tokens. ~1,500 tokens per result is a safe overestimate.
+const SEARCH_FEE_USD = 0.001;
+const SEARCH_TOKENS_PER_RESULT = 1500;
+
 interface Pricing {
   prompt: number;
   completion: number;
@@ -63,7 +68,8 @@ export class OpenRouterClient implements LlmClient {
     const p = await this.priceOf(this.model(task));
     // ~3 characters per token is a safe overestimate for English prompts and JSON schemas.
     const promptTokens = Math.ceil((input.system.length + input.user.length + JSON.stringify(input.jsonSchema).length) / 3);
-    return promptTokens * p.prompt + this.maxTokens * p.completion;
+    const search = input.webSearch ? SEARCH_FEE_USD + input.webSearch.maxResults * SEARCH_TOKENS_PER_RESULT * p.prompt : 0;
+    return promptTokens * p.prompt + this.maxTokens * p.completion + search;
   }
 
   async json<T>(task: LlmTask, input: LlmRequest<T>): Promise<LlmCallResult<T>> {
@@ -75,7 +81,8 @@ export class OpenRouterClient implements LlmClient {
       const res = await this.complete(model, input);
       cost += res.cost;
       try {
-        return { data: input.parse(JSON.parse(res.content)), model: res.model, costUsd: cost };
+        const data = input.parse(JSON.parse(res.content));
+        return { data, model: res.model, costUsd: cost, ...(input.webSearch ? { citations: res.citations } : {}) };
       } catch (e) {
         lastError = e;
       }
@@ -94,12 +101,17 @@ export class OpenRouterClient implements LlmClient {
       response_format: { type: "json_schema", json_schema: { name: input.schemaName, strict: true, schema: input.jsonSchema } },
       provider: { require_parameters: true },
       usage: { include: true },
+      ...(input.webSearch ? { plugins: [{ id: "web", engine: "parallel", mode: "fast", max_results: input.webSearch.maxResults }] } : {}),
     });
     const json = await this.request("/chat/completions", { method: "POST", body });
-    const content = json?.choices?.[0]?.message?.content;
+    const message = json?.choices?.[0]?.message;
+    const content = message?.content;
     if (typeof content !== "string") throw new ProviderError("no content in completion", true);
     const cost = Number(json.usage?.cost);
-    return { content, model: String(json.model ?? model), cost: Number.isFinite(cost) ? cost : 0 };
+    const citations: string[] = (Array.isArray(message.annotations) ? message.annotations : [])
+      .map((a: { url_citation?: { url?: unknown } }) => a?.url_citation?.url)
+      .filter((u: unknown): u is string => typeof u === "string");
+    return { content, citations, model: String(json.model ?? model), cost: Number.isFinite(cost) ? cost : 0 };
   }
 
   private async request(path: string, init: { method: string; body?: string }): Promise<any> {
