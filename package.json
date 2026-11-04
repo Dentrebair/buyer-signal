@@ -1,0 +1,32 @@
+{
+  "name": "buying-signal",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "next dev apps/web",
+    "build": "next build apps/web",
+    "typecheck": "tsc -b && tsc -p apps/web",
+    "test": "node --env-file-if-exists=.env.local node_modules/vitest/vitest.mjs run",
+    "db:migrate": "node --env-file=.env.local --import tsx packages/db/src/migrate.ts",
+    "db:seed": "node --env-file=.env.local --import tsx scripts/seed-sprint0.ts",
+    "db:check-rls": "node --env-file=.env.local -e \"require('child_process').execFileSync('psql',[process.env.DATABASE_URL,'-X','-q','-v','ON_ERROR_STOP=1','-f','packages/db/checks/rls.sql'],{stdio:'inherit'})\"",
+    "db:unseed": "node --env-file=.env.local --import tsx scripts/unseed-sprint0.ts",
+    "worker": "node --env-file=.env.local --import tsx apps/worker/src/main.ts",
+    "ingest:once": "node --env-file=.env.local --import tsx scripts/ingest-once.ts",
+    "apify:webhook": "node --env-file=.env.local --import tsx scripts/apify-webhook.ts"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "tsx": "4.23.15",
+    "typescript": "6.0.3",
+    "vitest": "5.1.0",
+    "pg-boss": "12.38.0"
+  }
+}

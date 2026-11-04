@@ -1,0 +1,9 @@
+{
+  "name": "@bs/db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": { "@bs/core": "*", "pg": "8.23.1" },
+  "devDependencies": { "@types/pg": "8.23.1" }
+}

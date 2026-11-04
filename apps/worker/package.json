@@ -1,0 +1,13 @@
+{
+  "name": "@bs/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@bs/core": "*",
+    "@bs/db": "*",
+    "@bs/integrations": "*",
+    "pg-boss": "12.38.0",
+    "zod": "4.6.7"
+  }
+}

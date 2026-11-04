@@ -1,0 +1,20 @@
+# env files
+.env*.local
+.env
+
+# deps & build
+node_modules/
+.next/
+dist/
+
+# OS
+.DS_Store
+
+# Scraped data (personal-data rules: PRD §6.5)
+/data/
+
+# build output
+*.tsbuildinfo
+
+# Next.js generated
+next-env.d.ts

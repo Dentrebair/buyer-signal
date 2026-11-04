@@ -1,0 +1,46 @@
+[
+ {
+  "key": "d5eb758b439a25d5",
+  "url": "https://www.indeed.com/viewjob?jk=d5eb758b439a25d5",
+  "title": "Administrative Assistant / Accounts Payable",
+  "datePublished": "2026-10-29T15:03:17.463Z",
+  "expired": false,
+  "language": "en",
+  "location": {
+   "city": "Manchester",
+   "countryCode": "US",
+   "streetAddress": "[removed]"
+  },
+  "employer": {
+   "name": null,
+   "corporateWebsite": "",
+   "employeesCount": "",
+   "ceoName": "[removed]"
+  },
+  "description": {
+   "text": "*Job Overview*\n\nAs an Administrative Assistant / Accounts Payable professional, you\u2019ll keep daily office operations organized while supporting accurate bookkeeping. You\u2019ll welcome visitors, manage front desk activity, and help clients and colleagues get timely, professional support. This role suits someone who is detail-oriented, comfortable handling confidential information, and ready to balance administrative tasks with accounts payable work.\n\n*Duties*\n\n* Process invoices and enter data, and support bookkeeping tasks using QuickBooks.\n* Answer and route calls on a multi-line phone system; gr"
+  }
+ },
+ {
+  "key": "fixture000002",
+  "url": "https://www.indeed.com/viewjob?jk=fixture000002",
+  "title": "Administrative Assistant / Accounts Payable",
+  "datePublished": "2026-10-29T15:03:17.463Z",
+  "expired": false,
+  "language": "en",
+  "location": {
+   "city": "Manchester",
+   "countryCode": "US",
+   "streetAddress": "[removed]"
+  },
+  "employer": {
+   "name": "Acme Freight LLC",
+   "corporateWebsite": "http://www.acme-freight.example",
+   "employeesCount": "11 to 50",
+   "ceoName": "[removed]"
+  },
+  "description": {
+   "text": "*Job Overview*\n\nAs an Administrative Assistant / Accounts Payable professional, you\u2019ll keep daily office operations organized while supporting accurate bookkeeping. You\u2019ll welcome visitors, manage front desk activity, and help clients and colleagues get timely, professional support. This role suits someone who is detail-oriented, comfortable handling confidential information, and ready to balance administrative tasks with accounts payable work.\n\n*Duties*\n\n* Process invoices and enter data, and support bookkeeping tasks using QuickBooks.\n* Answer and route calls on a multi-line phone system; gr"
+  }
+ }
+]

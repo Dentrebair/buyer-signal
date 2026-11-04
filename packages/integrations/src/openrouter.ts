@@ -1,0 +1,141 @@
+// OpenRouter implementation of LlmClient (PRD §5.3: one wrapper — task → model setting,
+// structured JSON output, Zod validation, provider-reported cost).
+import type { LlmCallResult, LlmClient, LlmRequest, LlmTask } from "@bs/core";
+
+const BASE = "https://openrouter.ai/api/v1";
+const MODEL_ENV: Record<LlmTask, string> = {
+  extraction: "MODEL_EXTRACTION",
+  resolve: "MODEL_EXTRACTION",
+  drafts: "MODEL_DRAFTS",
+  roast: "MODEL_ROAST",
+};
+
+export class ProviderError extends Error {
+  constructor(
+    message: string,
+    readonly retryable: boolean,
+  ) {
+    super(message);
+  }
+}
+
+export interface OpenRouterOptions {
+  apiKey?: string;
+  env?: Record<string, string | undefined>;
+  maxTokens?: number;
+  timeoutMs?: number;
+  retryDelaysMs?: number[]; // §5.3a: 30 s → 2 min → 8 min
+  fetch?: typeof fetch;
+}
+
+interface Pricing {
+  prompt: number;
+  completion: number;
+}
+
+export class OpenRouterClient implements LlmClient {
+  private readonly apiKey: string;
+  private readonly env: Record<string, string | undefined>;
+  private readonly maxTokens: number;
+  private readonly timeoutMs: number;
+  private readonly retryDelaysMs: number[];
+  private readonly fetch: typeof fetch;
+  private pricing: Promise<Map<string, Pricing>> | null = null;
+
+  constructor(opts: OpenRouterOptions = {}) {
+    this.env = opts.env ?? process.env;
+    const key = opts.apiKey ?? this.env.OPENROUTER_API_KEY;
+    if (!key) throw new Error("OPENROUTER_API_KEY is not set");
+    this.apiKey = key;
+    this.maxTokens = opts.maxTokens ?? 1200;
+    this.timeoutMs = opts.timeoutMs ?? 60_000;
+    this.retryDelaysMs = opts.retryDelaysMs ?? [30_000, 120_000, 480_000];
+    this.fetch = opts.fetch ?? fetch;
+  }
+
+  model(task: LlmTask): string {
+    const m = this.env[MODEL_ENV[task]];
+    if (!m) throw new Error(`${MODEL_ENV[task]} is not set`);
+    return m;
+  }
+
+  async worstCaseUsd(task: LlmTask, input: LlmRequest<unknown>): Promise<number> {
+    const p = await this.priceOf(this.model(task));
+    // ~3 characters per token is a safe overestimate for English prompts and JSON schemas.
+    const promptTokens = Math.ceil((input.system.length + input.user.length + JSON.stringify(input.jsonSchema).length) / 3);
+    return promptTokens * p.prompt + this.maxTokens * p.completion;
+  }
+
+  async json<T>(task: LlmTask, input: LlmRequest<T>): Promise<LlmCallResult<T>> {
+    const model = this.model(task);
+    let cost = 0;
+    let lastError: unknown;
+    // Invalid output → one retry, then fail (§5.1 step 4).
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const res = await this.complete(model, input);
+      cost += res.cost;
+      try {
+        return { data: input.parse(JSON.parse(res.content)), model: res.model, costUsd: cost };
+      } catch (e) {
+        lastError = e;
+      }
+    }
+    throw Object.assign(new ProviderError(`invalid ${input.schemaName} output: ${String(lastError)}`, false), { costUsd: cost });
+  }
+
+  private async complete(model: string, input: LlmRequest<unknown>) {
+    const body = JSON.stringify({
+      model,
+      max_tokens: this.maxTokens,
+      messages: [
+        { role: "system", content: input.system },
+        { role: "user", content: input.user },
+      ],
+      response_format: { type: "json_schema", json_schema: { name: input.schemaName, strict: true, schema: input.jsonSchema } },
+      provider: { require_parameters: true },
+      usage: { include: true },
+    });
+    const json = await this.request("/chat/completions", { method: "POST", body });
+    const content = json?.choices?.[0]?.message?.content;
+    if (typeof content !== "string") throw new ProviderError("no content in completion", true);
+    const cost = Number(json.usage?.cost);
+    return { content, model: String(json.model ?? model), cost: Number.isFinite(cost) ? cost : 0 };
+  }
+
+  private async request(path: string, init: { method: string; body?: string }): Promise<any> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const res = await this.fetch(BASE + path, {
+          ...init,
+          headers: { Authorization: `Bearer ${this.apiKey}`, "Content-Type": "application/json" },
+          signal: AbortSignal.timeout(this.timeoutMs),
+        });
+        if (res.ok) return await res.json();
+        const text = (await res.text()).slice(0, 300);
+        throw new ProviderError(`OpenRouter ${res.status}: ${text}`, res.status === 429 || res.status >= 500);
+      } catch (e) {
+        // Timeouts and network failures are retryable; other 4xx fail at once (§5.3a).
+        const retryable = e instanceof ProviderError ? e.retryable : true;
+        const delay = this.retryDelaysMs[attempt];
+        if (!retryable || delay === undefined) throw e;
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
+  }
+
+  private priceOf(model: string): Promise<Pricing> {
+    this.pricing ??= this.request("/models", { method: "GET" }).then(
+      (j: { data: { id: string; pricing: { prompt: string; completion: string } }[] }) =>
+        new Map(j.data.map((m) => [m.id, { prompt: Number(m.pricing.prompt), completion: Number(m.pricing.completion) }])),
+      (e) => {
+        this.pricing = null; // don't cache a failed price lookup
+        throw e;
+      },
+    );
+    return this.pricing.then((m) => {
+      const p = m.get(model);
+      if (!p) throw new Error(`no OpenRouter price for ${model}`);
+      return p;
+    });
+  }
+}
