@@ -1,6 +1,7 @@
 // Inbox queries (PRD §10.1). Queues and filters come from the URL so a view can be bookmarked.
 import type { ScoreBreakdown, SizeTier, SourceFamily, SourceType, StructuredIntelligence } from "@bs/core";
 import type { AuditCompany } from "@/components/WebsiteAudit.tsx";
+import { FULL_AUTOMATION_PCT, SCOPES, type Scope } from "./labels.ts";
 import { asOperator } from "./operator.ts";
 
 export const QUEUES = ["triage", "nurture", "sent", "rejected"] as const;
@@ -12,6 +13,7 @@ export interface View {
   vertical: string | null;
   country: string | null;
   size: SizeTier | null;
+  scope: Scope | null;
   id: string | null;
 }
 
@@ -25,6 +27,7 @@ export function parseView(sp: Record<string, string | string[] | undefined>): Vi
     vertical: one(sp.vertical),
     country: one(sp.country),
     size: one(sp.size) as SizeTier | null,
+    scope: SCOPES.find((s) => s === one(sp.scope)) ?? null,
     id: one(sp.id),
   };
 }
@@ -37,9 +40,13 @@ export function viewHref(v: View, patch: Partial<View> = {}): string {
   if (x.vertical) p.set("vertical", x.vertical);
   if (x.country) p.set("country", x.country);
   if (x.size) p.set("size", x.size);
+  if (x.scope) p.set("scope", x.scope);
   if (x.id) p.set("id", x.id);
   return `/dashboard?${p}`;
 }
+
+// The company's largest automatable share across its extracted signals (job posts).
+const PCT_SQL = "(select max((ch.structured_intelligence ->> 'automatable_task_percentage')::int) from challenges ch where ch.company_id = c.id)";
 
 // §10.1: Triage > 70, Nurture 50–70, hidden < 50 (never listed here).
 const QUEUE_SQL: Record<Queue, string> = {
@@ -62,6 +69,7 @@ export interface Row {
   families: SourceFamily[];
   symptom: string | null; // best signal's verified_symptom
   hours: number | null; // best signal's estimated hours wasted per week
+  automatable_pct: number | null; // largest automatable share across its signals
 }
 
 export interface Challenge {
@@ -116,6 +124,7 @@ export function loadInbox(view: View): Promise<Inbox> {
     if (view.vertical) add("c.vertical = ?", view.vertical);
     if (view.country) add("c.country = ?", view.country);
     if (view.size) add("c.size_tier = ?", view.size);
+    if (view.scope) add(`${PCT_SQL} ${view.scope === "full" ? ">=" : "<"} ?`, FULL_AUTOMATION_PCT);
     const where = filters.length ? ` and ${filters.join(" and ")}` : "";
 
     const counts = Object.fromEntries(QUEUES.map((q) => [q, 0])) as Record<Queue, number>;
@@ -135,7 +144,8 @@ export function loadInbox(view: View): Promise<Inbox> {
                 coalesce((select array_agg(distinct ch.source_family) from challenges ch where ch.company_id = c.id), '{}') as families,
                 (select max(coalesce(ch.posted_at, ch.created_at)) from challenges ch where ch.company_id = c.id) as newest,
                 best.si ->> 'verified_symptom' as symptom,
-                (best.si -> 'blast_radius' ->> 'estimated_hours_wasted_weekly')::int as hours
+                (best.si -> 'blast_radius' ->> 'estimated_hours_wasted_weekly')::int as hours,
+                ${PCT_SQL} as automatable_pct
            from companies c
            left join lateral (
              select ch.structured_intelligence as si from challenges ch

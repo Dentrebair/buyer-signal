@@ -193,7 +193,7 @@ export async function fetchDataset(d: Deps, job: FetchDataset): Promise<Partial<
     }
     // Mark seen and enqueue in one transaction: a crash in between must not leave a post
     // marked seen but never extracted (a retry would then drop it as a duplicate).
-    const gate = gateJobPost(post);
+    const gate = gateJobPost(post, run.vertical as VerticalSlug | null);
     const outcome = await withTransaction(d.pool, async (c): Promise<DropCounter | "sent"> => {
       if (!(await markSeen(c, post.naturalId))) return "dropped_dedup_count";
       if (!gate.pass) return gate.reason === "recruiter" ? "dropped_recruiter_count" : "dropped_trie_count";

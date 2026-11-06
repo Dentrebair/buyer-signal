@@ -185,6 +185,9 @@ select:hover { border-color: var(--border-strong); }
   font-size: 14px; color: var(--text-2); line-height: 1.5;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
+.scope-tag { align-self: flex-start; font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 999px; border: 1px solid; }
+.scope-full { color: var(--green); background: var(--green-bg); border-color: var(--green-border); }
+.scope-partial { color: var(--blue); background: var(--blue-bg); border-color: var(--blue-border); }
 .row-meta { display: flex; justify-content: space-between; align-items: center; gap: var(--s2); font-size: 13px; color: var(--muted); }
 .row-meta-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-icons { display: inline-flex; gap: 6px; flex-shrink: 0; }

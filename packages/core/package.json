@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./verticals": "./src/verticals.ts"
+    "./verticals": "./src/verticals.ts",
+    "./scope": "./src/scope.ts"
   },
   "dependencies": {
     "cheerio": "1.2.0",

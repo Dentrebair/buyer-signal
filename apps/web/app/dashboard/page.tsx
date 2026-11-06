@@ -13,12 +13,15 @@ import {
   FAMILY_LABEL,
   QUEUE_LABEL,
   REJECT_LABEL,
+  SCOPES,
+  SCOPE_LABEL,
   SIZE_LABEL,
   SIZE_ORDER,
   SOURCE_LABEL,
   VERTICAL_SHORT,
   ageLabel,
   countryLabel,
+  scopeOf,
   verticalLabel,
 } from "@/lib/labels.ts";
 
@@ -31,7 +34,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
   const index = selected ? inbox.rows.findIndex((r) => r.id === selected.id) : -1;
   const next = index >= 0 ? (inbox.rows[index + 1] ?? inbox.rows[index - 1] ?? null) : null;
   const hasSample = inbox.rows.some((r) => r.is_sample) || selected?.is_sample;
-  const filtered = Boolean(view.vertical || view.country || view.size);
+  const filtered = Boolean(view.vertical || view.country || view.size || view.scope);
 
   return (
     <div className="app" data-view={view.id ? "detail" : "list"}>
@@ -66,8 +69,9 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
             label="Size"
             options={SIZE_ORDER.filter((s) => inbox.options.sizes.includes(s)).map((s) => ({ value: s, label: SIZE_LABEL[s] }))}
           />
+          <FilterSelect name="scope" label="Automation" options={SCOPES.map((s) => ({ value: s, label: SCOPE_LABEL[s] }))} />
           {filtered && (
-            <Link href={viewHref(view, { vertical: null, country: null, size: null, id: null })} className="clear-filters">
+            <Link href={viewHref(view, { vertical: null, country: null, size: null, scope: null, id: null })} className="clear-filters">
               Clear filters
             </Link>
           )}
@@ -101,7 +105,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
           <div className="empty">
             <p>{emptyText(view, filtered)}</p>
             {filtered && (
-              <Link href={viewHref(view, { vertical: null, country: null, size: null, id: null })} className="btn">
+              <Link href={viewHref(view, { vertical: null, country: null, size: null, scope: null, id: null })} className="btn">
                 Clear filters
               </Link>
             )}
@@ -160,6 +164,7 @@ function ListRow({ row, href, current }: { row: Row; href: string; current: bool
         <span className={`score-pill num tier-${tier(row.priority_score)}`}>{row.priority_score}</span>
       </span>
       {row.symptom && <span className="row-pain">{row.symptom}</span>}
+      <ScopeTag pct={row.automatable_pct} />
       <span className="row-meta">
         <span className="row-meta-text">{meta.join(" · ")}</span>
         <span className="row-icons">
@@ -169,6 +174,17 @@ function ListRow({ row, href, current }: { row: Row; href: string; current: bool
         </span>
       </span>
     </RowLink>
+  );
+}
+
+// "Full automation · 75%" / "Partial automation · 50%"; nothing when no post was extracted.
+function ScopeTag({ pct }: { pct: number | null }) {
+  const scope = scopeOf(pct);
+  if (!scope) return null;
+  return (
+    <span className={`scope-tag scope-${scope}`}>
+      {SCOPE_LABEL[scope]} · <span className="num">{pct}%</span>
+    </span>
   );
 }
 
@@ -238,8 +254,8 @@ function Dossier({ company: c, view, nextHref, selfHref }: { company: Company; v
                   <Stat
                     tone="green"
                     icon={<Percent size={16} aria-hidden />}
-                    label="Automatable"
-                    value={si.automatable_task_percentage === null ? "—" : `${si.automatable_task_percentage}%`}
+                    label={scopeOf(si.automatable_task_percentage) === "full" ? "Full automation" : "Automatable"}
+                    value={si.automatable_task_percentage === null ? "—" : `${si.automatable_task_percentage}% of duties`}
                   />
                 </dl>
                 <p className="d-sub">

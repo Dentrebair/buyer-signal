@@ -427,6 +427,31 @@ and match offsets in `challenges.semantic_nodes` for the Proof Viewer.
    2 % of posts the trie dropped. Real pain found → its phrases are proposed to the
    operator on `/radar` for approval; approved phrases are added to the trie.
 
+**Build notes (2026-11-04).** Offline scripts, not a queue: `npm run mine -- fetch | label |
+build | eval | review | apply` (data in `data/mining/`, git-ignored; output
+`packages/core/src/atoms.ts`). The mining posts never enter the lead pipeline.
+- **Posts:** 846 Indeed posts (16 verticals × their markets × 2 of 3 search titles from
+  `SEARCH_TITLES`, 12 each, `datePosted: 14`) for $0.18, plus the 388 Sprint 0 posts with text.
+  20 per vertical held out by hash (316 eval posts); 922 posts mined.
+- **Labels:** Haiku 5.5, 5 posts per call, $0.66 for 1,238 posts. Same labels for mining and eval
+  posts; phrases from eval posts are never used.
+- **Keep rules:** a phrase must be copied word for word from its post (52 of 3,776 weren't);
+  variants must appear in some mining post. Work atoms kept when ≥ 70 % of the posts they occur
+  in are positive; RECRUITER atoms need ≥ 2 recruiter posts and no employer post;
+  PHYSICAL_ROLE atoms match the title only. Seen in ≥ 3 verticals → core list, else per vertical.
+- **Gate change:** MANUAL_ROLE and INTEGRATION_DEBT atoms also count towards the ≥ 2 work atoms
+  (§5.1 step 3 named three categories). Overlapping atoms count once (longest wins).
+- **Result, LLM labels (before operator review):** recall 90.6 % pooled, every vertical ≥ 77 %
+  (lowest: professional services); precision 87.6 %. Sprint 1 hand-written atoms on the same
+  posts: 85.3 %, insurance 67 %. Operator review covers gate misses, gate passes the LLM
+  called negative, and 3 agreed posts per vertical (107 posts) instead of all 320.
+- **After operator review (2026-11-06): gate met.** Recall 93.0 % pooled, every vertical ≥ 76 %
+  (lowest: education); precision 97.4 %. The LLM is stricter than the operator: 27 of 34 posts
+  it called "not a lead" were leads. The operator agreed with 47 of 48 spot checks, so the
+  unreviewed LLM labels stand.
+- **Found:** right after a run ends, Apify's `chargedEventCounts` can show only the start
+  event, so the worker's counter under-records item charges until the daily reconcile.
+
 ### 6.4 4-Gate website audit (DOM-only in v1)
 - **Gate 1 — Website dependency:** `depends_on_website = false` unless high-consideration
   inbound vertical, active ad pixels (`fbevents.js`, `gtag.js`), or ≥ 600 words of service
@@ -884,8 +909,9 @@ imagined payload.
    price, rate limit, the per-request cost field, and OpenRouter's fee on credit purchases.
    Compare 2–3 candidates per task on the same fixtures before pinning.
 5. **Gemini embeddings:** `gemini-embedding-001` with `outputDimensionality: 768` (Sprint 4).
-6. **`enthec/webappanalyzer`:** maintenance activity and licence (believed GPL-3.0 — fine for
-   a private, undistributed tool; revisit before any SaaS distribution).
+6. **`enthec/webappanalyzer`:** maintenance activity and licence. ✅ *2026-11-04:* GPL-3.0
+   (not AGPL). Fine for a hosted subscription because customers never receive the file; see
+   the "Fingerprint licence" row in §18.8 for what changes that.
 7. **pg-boss** with Supabase session pooler from Railway. ✅ *From local, 2026-11-03:* session
    pooler (eu-central-1, port 5432) connects; Postgres 17.11; advisory locks and LISTEN/NOTIFY
    work; `max_connections` = 60 → keep pools small (worker pg-boss max 5, web max 3). `vector`
@@ -1172,6 +1198,7 @@ v1 load for reference: ~100 job posts/day, ~15 website searches/day, ~15 new car
 |---|---|---|---|
 | Personal data | Business contacts only; founder name/email if self-published; no employee data (Q49, Q61); personal fields stripped at ingest | Data retention job (delete rejected/stale companies after N months); data-subject request process (India DPDP, UAE PDPL, US state laws) | First customer or any public launch |
 | Scraping terms | Public data via Apify; LinkedIn via search snippets only; no bot-wall bypass | Licensed data providers instead of scrapers | Selling the product, or a source objects |
+| Fingerprint licence | `webappanalyzer.json` (GPL-3.0) is loaded by the worker only and never sent to the browser. A hosted SaaS is not distribution, so no obligations. **Keep it server-side.** To do: add a licence/source note beside the file; make `fingerprints:update` refuse a commit whose licence isn't GPL-3.0 (an AGPL switch would cover hosted use) | Own list of ~50 notable tools (forms, CRM, booking, chat, CMS, ecommerce, payments); an MIT-licensed set; Wappalyzer / BuiltWith API | Shipping anything to customers (self-hosted build, desktop app, extension, SDK, fingerprints in browser code), selling the fingerprint data, or the upstream licence changing. Get a lawyer's quick check before charging customers (not legal advice) |
 
 ### 18.9 Added to v1 (Q64–Q66)
 - **Raw payload archive (Q64, Sprint 2):** raw scraped items, personal fields stripped at

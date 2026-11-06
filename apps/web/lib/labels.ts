@@ -48,6 +48,8 @@ export const FAMILY_LABEL: Record<SourceFamily, string> = {
   inbound: "Inbound",
 };
 
+export { FULL_AUTOMATION_PCT, SCOPES, SCOPE_LABEL, type Scope, scopeOf } from "@bs/core/scope";
+
 export const verticalLabel = (slug: string | null) =>
   slug && slug in VERTICALS ? VERTICALS[slug as keyof typeof VERTICALS] : "Vertical unknown";
 
