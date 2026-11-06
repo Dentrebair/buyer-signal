@@ -31,6 +31,8 @@ import {
   classifySize,
   domainCacheKey,
   gateJobPost,
+  type PlannedSlot,
+  planRotation,
   signalScore,
   weightsFor,
   worstCaseApifyCost,
@@ -38,6 +40,8 @@ import {
 import {
   type DropCounter,
   bumpCounters,
+  claimRotationDay,
+  rotationHistory,
   cacheDomain,
   cachedDomain,
   claimRun,
@@ -73,6 +77,9 @@ import { type ApifyClient, type Page, type SniffInput, type SniffResult, INDEED_
 
 export interface Settings {
   apifyCycleCapUsd: number;
+  rotationEnabled: boolean; // ROTATION_ENABLED: the daily ingest-rotation starts paid runs only when true
+  boardSlotsPerDay: number; // BOARD_SLOTS_PER_DAY (§4.1)
+  boardPostsPerSlot: number; // BOARD_POSTS_PER_SLOT
   searchDailyCap: number; // SEARCH_DAILY_CAP: paid website searches per UTC day (§5.1 step 5c)
 }
 
@@ -86,7 +93,7 @@ export type Send = (
 
 export interface Deps {
   pool: pg.Pool;
-  apify: Pick<ApifyClient, "startRun" | "getRun" | "datasetItems" | "usage">;
+  apify: Pick<ApifyClient, "startRun" | "getRun" | "datasetItems" | "datasetItemCount" | "usage">;
   llm: LlmClient;
   fetchPage: (url: string) => Promise<Page | null>;
   rdap: DomainAge;
@@ -100,6 +107,25 @@ export interface Deps {
 const PAGE = 25; // §5.3a: ≤ 25 dataset items per job
 const PLAN = { pricePerItem: INDEED_PRICES["apify-default-dataset-item"], startPrice: INDEED_PRICES["apify-actor-start"] };
 const DEFER_SECONDS = 3600; // over cap → try again in an hour (§5.3)
+
+// ── ingest-rotation (daily cron) ─────────────────────────────────────────────
+// Plans the day's slots (§4.1) and sends one start-board-run per slot in the same transaction
+// as the day's claim, so a retried cron job never starts a second set of paid runs.
+export async function ingestRotation(d: Deps): Promise<{ planned: PlannedSlot[] } | { skipped: string }> {
+  if (!d.settings.rotationEnabled) return { skipped: "ROTATION_ENABLED is off" };
+  const now = d.now();
+  const plan = planRotation(await rotationHistory(d.pool), d.settings.boardSlotsPerDay, now);
+  if (!plan.length) return { skipped: "no slot due" };
+  const claimed = await withTransaction(d.pool, async (c) => {
+    if (!(await claimRotationDay(c, now.toISOString().slice(0, 10), plan))) return false;
+    for (const s of plan)
+      await d.send(Q.startBoardRun, { country: s.country, title: s.title, vertical: s.vertical, limit: d.settings.boardPostsPerSlot } satisfies StartBoardRun, undefined, c);
+    return true;
+  });
+  if (!claimed) return { skipped: "already planned today" };
+  d.log("rotation planned", { slots: plan });
+  return { planned: plan };
+}
 
 // ── start-board-run ─────────────────────────────────────────────────────────
 // `jobKey` (the pg-boss job id) makes a retry of the same job never start a second paid run.
@@ -129,7 +155,7 @@ export async function startBoardRun(
     await d.send(Q.startBoardRun, job, { startAfter: DEFER_SECONDS });
     return { deferred: true };
   }
-  const runId = await createRun(d.pool, { jobKey, jobType: "indeed", vertical: job.vertical, country: job.country, estimatedCostUsd: worst });
+  const runId = await createRun(d.pool, { jobKey, jobType: "indeed", vertical: job.vertical, country: job.country, estimatedCostUsd: worst, queryTitle: job.title });
   if (!runId) {
     await release(); // a concurrent attempt owns this key
     return { skipped: "concurrent attempt" };
@@ -158,7 +184,10 @@ export async function onApifyRunEvent(d: Deps, job: ApifyRunEvent): Promise<stri
 
   const ok = run.status === "SUCCEEDED";
   const usage = await d.apify.usage();
-  const actual = runCostUsd(run, INDEED_PRICES);
+  // Right after a run ends, chargedEventCounts can still show only the start event; the dataset's
+  // item count is final, so the cost is the larger of the two.
+  const items = ok ? await d.apify.datasetItemCount(run.defaultDatasetId) : 0;
+  const actual = Math.max(runCostUsd(run, INDEED_PRICES), ok ? items * PLAN.pricePerItem + PLAN.startPrice : 0);
   // Claim, settle and enqueue the fetch in one transaction: a crash leaves the run 'running'
   // for the next poll, never 'fetching' with no fetch job.
   const claimed = await withTransaction(d.pool, async (c) => {

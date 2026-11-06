@@ -5,7 +5,7 @@ import { z } from "zod";
 import { type QueueName, ApifyRunEvent, ExtractLlm, FetchDataset, Q, SniffDomain, StartBoardRun } from "@bs/core";
 import { BudgetExceededError, createPool, gatedLlm } from "@bs/db";
 import { ApifyClient, OpenRouterClient, ProviderError, RdapClient, fetchPage, loadFingerprints, sniffWebsite } from "@bs/integrations";
-import { type Deps, extractLlm, fetchDataset, onApifyRunEvent, pollRuns, reconcileApify, resolveBatch, sniffDomain, sniffSeeds, startBoardRun } from "./jobs.ts";
+import { type Deps, extractLlm, fetchDataset, ingestRotation, onApifyRunEvent, pollRuns, reconcileApify, resolveBatch, sniffDomain, sniffSeeds, startBoardRun } from "./jobs.ts";
 
 const env = z
   .object({
@@ -13,6 +13,9 @@ const env = z
     APIFY_CYCLE_CAP_USD: z.coerce.number().positive().default(4.5),
     MONTHLY_CAP_USD: z.coerce.number().positive().default(20),
     SEARCH_DAILY_CAP: z.coerce.number().int().min(0).default(15),
+    ROTATION_ENABLED: z.enum(["true", "false"]).default("false"),
+    BOARD_SLOTS_PER_DAY: z.coerce.number().int().min(0).max(45).default(3),
+    BOARD_POSTS_PER_SLOT: z.coerce.number().int().min(1).max(100).default(35),
   })
   .parse(process.env);
 
@@ -36,7 +39,13 @@ const deps: Deps = {
   sniff: (x) => sniffWebsite(x),
   send: (queue, data, opts, tx) =>
     boss.send(queue, data, { ...opts, ...(tx ? { db: { executeSql: (text: string, values?: unknown[]) => tx.query(text, values) } } : {}) }),
-  settings: { apifyCycleCapUsd: env.APIFY_CYCLE_CAP_USD, searchDailyCap: env.SEARCH_DAILY_CAP },
+  settings: {
+    apifyCycleCapUsd: env.APIFY_CYCLE_CAP_USD,
+    searchDailyCap: env.SEARCH_DAILY_CAP,
+    rotationEnabled: env.ROTATION_ENABLED === "true",
+    boardSlotsPerDay: env.BOARD_SLOTS_PER_DAY,
+    boardPostsPerSlot: env.BOARD_POSTS_PER_SLOT,
+  },
   now: () => new Date(),
   log,
 };
@@ -62,6 +71,8 @@ const queues: QueueDef<any>[] = [
   // Free (plain HTTP) and automatic (§4.2): pending seeds every 10 min, 4 sites at a time.
   { name: Q.sniffSeeds, concurrency: 1, expireInSeconds: 120, schema: z.unknown(), run: (d) => sniffSeeds(d) },
   { name: Q.sniffDomain, concurrency: 4, expireInSeconds: 120, schema: SniffDomain, run: sniffDomain },
+  // Daily, paid (Apify); does nothing unless ROTATION_ENABLED=true (§4.1).
+  { name: Q.ingestRotation, concurrency: 1, expireInSeconds: 120, schema: z.unknown(), run: (d) => ingestRotation(d) },
   { name: Q.pollRuns, concurrency: 1, expireInSeconds: 120, schema: z.unknown(), run: (d) => pollRuns(d) },
   { name: Q.reconcileApify, concurrency: 1, expireInSeconds: 120, schema: z.unknown(), run: (d) => reconcileApify(d) },
 ];
@@ -106,6 +117,11 @@ async function main() {
   await boss.schedule(Q.reconcileApify, "15 3 * * *");
   await boss.schedule(Q.resolveBatch, "0 4 * * *");
   await boss.schedule(Q.sniffSeeds, "*/10 * * * *");
+  // Daily rotation: off for now; runs are started by hand (Run now). To enable, uncomment and
+  // set ROTATION_ENABLED=true. 02:00 is before the 04:00 resolve batch, so the day's new posts
+  // get the search quota (§5.1 step 5c).
+  // await boss.schedule(Q.ingestRotation, "0 2 * * *");
+  await boss.unschedule(Q.ingestRotation).catch(() => {}); // drop the schedule an earlier start registered
   log("worker started", { queues: queues.map((q) => q.name) });
 }
 

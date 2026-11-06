@@ -75,6 +75,11 @@ export class ApifyClient {
     return this.call(`/datasets/${datasetId}/items?clean=true&offset=${offset}&limit=${limit}`);
   }
 
+  // Final item count of a finished run's dataset (its charge counts can lag behind, see onApifyRunEvent).
+  async datasetItemCount(datasetId: string): Promise<number> {
+    return Number((await this.call(`/datasets/${datasetId}`)).data.itemCount ?? 0);
+  }
+
   // Billing cycle and real usage — the daily reconcile overwrites the gate counter with it (§5.3).
   async usage(): Promise<{ cycleStart: Date; cycleEnd: Date; usageUsd: number; limitUsd: number }> {
     const d = (await this.call("/users/me/limits")).data;

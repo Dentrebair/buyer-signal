@@ -14,15 +14,21 @@ export type Db = pg.Pool | pg.PoolClient;
 
 export async function withTransaction<T>(pool: pg.Pool, fn: (c: pg.PoolClient) => Promise<T>): Promise<T> {
   const client = await pool.connect();
+  // A checked-out client has no pool 'error' listener: a connection dropped mid-transaction
+  // (network loss, laptop sleep) would otherwise be an unhandled 'error' event and crash the worker.
+  let broken: Error | undefined;
+  const onError = (e: Error) => (broken = e);
+  client.on("error", onError);
   try {
     await client.query("begin");
     const out = await fn(client);
     await client.query("commit");
     return out;
   } catch (e) {
-    await client.query("rollback");
+    await client.query("rollback").catch((r: Error) => (broken ??= r));
     throw e;
   } finally {
-    client.release();
+    client.off("error", onError);
+    client.release(broken); // a broken connection is destroyed, not returned to the pool
   }
 }

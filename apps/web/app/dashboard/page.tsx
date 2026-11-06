@@ -1,9 +1,10 @@
 // Triage inbox (PRD §10.1, Q67): queues + filters | ranked list | dossier.
 import Link from "next/link";
 import { ArrowLeft, ArrowSquareOut, ChartBar, Files, Fire, Flask, GlobeSimpleX, Hourglass, Info, Lightning, Percent, Repeat, Robot, Warning, X } from "@phosphor-icons/react/ssr";
-import { type ScoreBreakdown, type StructuredIntelligence, boardColumn, sourceFamily } from "@bs/core";
+import { type ScoreBreakdown, type SourceFamily, type StructuredIntelligence, boardColumn, sourceFamily } from "@bs/core";
 import { ActionBar } from "@/components/ActionBar.tsx";
 import { FamilyIcon } from "@/components/FamilyIcon.tsx";
+import { PostLink } from "@/components/PostLink.tsx";
 import { FilterSelect } from "@/components/Filters.tsx";
 import { RowLink } from "@/components/RowLink.tsx";
 import { ThemeToggle } from "@/components/ThemeToggle.tsx";
@@ -56,6 +57,11 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
             ))}
           </ul>
         </nav>
+
+        <Link href="/radar" className="queue sources-link">
+          <span>Sources</span>
+          <span className="queue-count">Run now</span>
+        </Link>
 
         <div className="filters" role="group" aria-label="Filters">
           <FilterSelect
@@ -168,7 +174,7 @@ function ListRow({ row, href, current }: { row: Row; href: string; current: bool
       <span className="row-meta">
         <span className="row-meta-text">{meta.join(" · ")}</span>
         <span className="row-icons">
-          {row.families.map((f) => (
+          {uniqueByLabel(row.families).map((f) => (
             <FamilyIcon key={f} family={f} size={14} />
           ))}
         </span>
@@ -187,6 +193,9 @@ function ScopeTag({ pct }: { pct: number | null }) {
     </span>
   );
 }
+
+// LinkedIn and Reddit both read "Social digest": show it once.
+const uniqueByLabel = (families: SourceFamily[]) => families.filter((f, i) => families.findIndex((g) => FAMILY_LABEL[g] === FAMILY_LABEL[f]) === i);
 
 const displayName = (r: Row) => r.company_name ?? r.domain ?? "Unnamed company";
 
@@ -288,18 +297,21 @@ function Dossier({ company: c, view, nextHref, selfHref }: { company: Company; v
               {c.challenges.map((ch) => {
                 const [title, ...rest] = ch.evidence_snippet.split("\n\n");
                 const family = sourceFamily(ch.source_type);
+                const url = ch.source_url && /^https?:\/\//i.test(ch.source_url) ? ch.source_url : null;
+                const social = family === "linkedin_post" || family === "social_post";
                 return (
-                  <li key={ch.id} className="card ev">
+                  <li key={ch.id} className={`card ev${social && url ? " ev-social" : ""}`}>
+                    {social && url && <PostLink url={url} sourceType={ch.source_type} id={`post-${ch.id}`} />}
                     <div className="ev-head">
                       <FamilyIcon family={family} labelled={false} />
                       <span className="ev-title">{title}</span>
                     </div>
                     <p className="ev-meta">
                       {SOURCE_LABEL[ch.source_type]} · {ageLabel(ch.posted_at)} · signal <span className="num">{ch.signal_score}</span>
-                      {ch.source_url && /^https?:\/\//i.test(ch.source_url) && (
+                      {url && !social && (
                         <>
                           {" · "}
-                          <a href={ch.source_url} target="_blank" rel="noopener noreferrer" className="link">
+                          <a href={url} target="_blank" rel="noopener noreferrer" className="link">
                             Open original <ArrowSquareOut size={12} aria-hidden />
                             <span className="sr-only">(opens in a new tab)</span>
                           </a>
@@ -431,7 +443,7 @@ function ScoreWhy({ breakdown: b, si, total, source }: { breakdown: ScoreBreakdo
         <div>
           <dt>
             Confirmed by other sources{" "}
-            <span className="muted">— {b.families.length === 1 ? `only ${FAMILY_LABEL[b.families[0]!]}` : b.families.map((f) => FAMILY_LABEL[f]).join(", ")}</span>
+            <span className="muted">— {b.families.length === 1 ? `only ${FAMILY_LABEL[b.families[0]!]}` : uniqueByLabel(b.families).map((f) => FAMILY_LABEL[f]).join(", ")}</span>
           </dt>
           <dd className="num">+{b.M}</dd>
         </div>

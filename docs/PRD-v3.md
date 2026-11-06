@@ -127,6 +127,21 @@ can resolve — pulling more posts than can be looked up only wastes Apify credi
 §6.3 phrase mining). After a full cycle, slots with a low pass rate (few posts surviving the
 Bouncer) drop to every second cycle, so volume shifts to the verticals that produce cards.
 
+**Build notes (2026-11-06).** `ingest-rotation` runs at 02:00 UTC, before the 04:00 resolve
+batch, and does nothing unless `ROTATION_ENABLED=true`. It picks the `BOARD_SLOTS_PER_DAY` most
+overdue slots: never-run first in §4.1b order, then the oldest. Each run of a slot uses that
+vertical's next `SEARCH_TITLES` entry. A slot's yield is cards ÷ new in-date posts across its
+runs: below 15 % it waits an extra cycle, and below 3 % after 2 runs it is off. The day's plan
+is claimed in `rotation_days` in the same transaction that enqueues its runs, so a retried cron
+starts nothing twice. Fixed alongside it: run cost is settled from the dataset's item count
+when Apify's charge counts lag. A connection dropped mid-transaction no longer crashes the
+worker.
+**Rotation is off for now (operator decision, 2026-11-06).** The schedule line is commented
+out in `apps/worker/src/main.ts`. Job-post runs start by hand from **Sources** (`/radar`): the
+form is pre-filled with the next rotation slot (vertical, market, title, posts). The website
+check and website search have Run now buttons too; LinkedIn and Reddit show as not built yet.
+The worker's budget gates apply to every Run now click.
+
 ### 4.1b Verticals and markets
 
 | # | Vertical | Typical desk work to automate | IN | UAE | US |

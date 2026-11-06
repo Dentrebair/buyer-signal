@@ -6,11 +6,12 @@ import type pg from "pg";
 import { type LlmClient, type StructuredIntelligence, Q, apifyCycleKey, auditSite, parseHtml } from "@bs/core";
 import { claimSeeds, createPool } from "@bs/db";
 import type { ApifyRun, SniffResult } from "@bs/integrations";
-import { type Deps, type Send, extractLlm, fetchDataset, onApifyRunEvent, resolveBatch, sniffDomain, startBoardRun } from "../src/jobs.ts";
+import { type Deps, type Send, extractLlm, fetchDataset, ingestRotation, onApifyRunEvent, resolveBatch, sniffDomain, startBoardRun } from "../src/jobs.ts";
 
 const items = JSON.parse(readFileSync(new URL("../../../packages/integrations/test/fixtures/indeed-items.json", import.meta.url), "utf8"));
 const NOW = new Date("2026-11-03T12:00:00Z");
 const CYCLE = new Date("2000-01-16T00:00:00Z"); // test-only cycle key, never a real one
+const ROTATION_DAY = new Date("2000-01-02T02:00:00Z"); // test-only rotation day
 const RUN_ID = "testRunFixture01";
 const DOMAIN = "acme-freight.example";
 const R_DOMAIN = "resolve-test.example"; // resolve-path test company
@@ -37,7 +38,8 @@ function fakes(
   pool: pg.Pool,
   over: { usageUsd?: number; capUsd?: number; searchCap?: number; resolveTo?: { domain: string | null; cited: string[]; confidence?: "high" | "low" }; pages?: Record<string, string>;
     ages?: Record<string, Date | null | "error">;
-    sniffs?: Record<string, SniffResult> } = {},
+    sniffs?: Record<string, SniffResult>;
+    lagging?: boolean; rotation?: boolean; now?: Date } = {},
 ) {
   const sent: { queue: string; data: any; opts?: object }[] = [];
   const started: object[] = [];
@@ -45,7 +47,8 @@ function fakes(
     id: RUN_ID,
     status: "SUCCEEDED",
     defaultDatasetId: "testDataset01",
-    chargedEventCounts: { "apify-default-dataset-item": 2, "apify-actor-start": 1 },
+    // `lagging`: the run reports done before Apify has counted its items (seen live, 2026-11-04).
+    chargedEventCounts: over.lagging ? { "apify-actor-start": 1 } : { "apify-default-dataset-item": 2, "apify-actor-start": 1 },
     startedAt: NOW.toISOString(),
   };
   const llm: LlmClient = {
@@ -64,6 +67,7 @@ function fakes(
       startRun: async (_a, input) => (started.push(input), { ...run, status: "READY" }),
       getRun: async () => run,
       datasetItems: async (_id, offset) => (offset === 0 ? items : []) as any,
+      datasetItemCount: async () => items.length,
     },
     llm,
     fetchPage: async (url) => (over.pages?.[url] ? { url, status: 200, html: over.pages[url]!, headers: {} } : null),
@@ -77,8 +81,14 @@ function fakes(
     },
     sniff: async (x) => over.sniffs?.[x.domain] ?? { reachable: false, reason: "no fake" },
     send,
-    settings: { apifyCycleCapUsd: over.capUsd ?? 4.5, searchDailyCap: over.searchCap ?? 15 },
-    now: () => NOW,
+    settings: {
+      apifyCycleCapUsd: over.capUsd ?? 4.5,
+      searchDailyCap: over.searchCap ?? 15,
+      rotationEnabled: over.rotation ?? false,
+      boardSlotsPerDay: 3,
+      boardPostsPerSlot: 35,
+    },
+    now: () => over.now ?? NOW,
     log: () => {},
   };
   return { deps, sent, started, rdapCalls };
@@ -105,6 +115,7 @@ async function cleanup(pool: pg.Pool) {
   await pool.query("delete from seed_urls where domain like 'sniff-test%.example'");
   await pool.query("delete from domain_cache where domain like 'sniff-test%.example'");
   await pool.query("delete from ingestion_runs where job_key = 'test-sniff-run'");
+  await pool.query("delete from rotation_days where day = $1", [ROTATION_DAY.toISOString().slice(0, 10)]);
 }
 
 // Remote database (~100 ms per round trip), so generous timeouts.
@@ -166,6 +177,31 @@ describe.skipIf(!process.env.DATABASE_URL)("worker pipeline (database)", { timeo
     expect(n).toBe(1);
     const run = (await pool.query("select status, raw_items_ingested, llm_persisted_count from ingestion_runs where apify_run_id = $1", [RUN_ID])).rows[0];
     expect(run).toMatchObject({ status: "done", raw_items_ingested: 4, llm_persisted_count: 1 });
+  });
+
+  it("settles the real cost when the run's charge counts lag behind its items", async () => {
+    const { deps } = fakes(pool, { lagging: true });
+    await pool.query("delete from ingestion_runs where apify_run_id = $1", [RUN_ID]);
+    await pool.query("delete from spend_counters where key = $1", [apifyCycleKey(CYCLE)]);
+    await startBoardRun(deps, { country: "us", title: "accounts payable", vertical: "logistics", limit: 10 }, "test-key-lag");
+    expect(await onApifyRunEvent(deps, { apifyRunId: RUN_ID })).toBe("SUCCEEDED");
+    const settled = Number((await pool.query("select total_usd from spend_counters where key = $1", [apifyCycleKey(CYCLE)])).rows[0].total_usd);
+    expect(settled).toBeCloseTo(0.0012, 6); // 2 items from the dataset + start, not the start alone
+    await pool.query("delete from ingestion_runs where apify_run_id = $1", [RUN_ID]);
+    await pool.query("delete from spend_events where ref = $1", [RUN_ID]);
+  });
+
+  it("ingest-rotation: off by default; when on, plans the day's slots once (§4.1)", async () => {
+    expect(await ingestRotation(fakes(pool).deps)).toEqual({ skipped: "ROTATION_ENABLED is off" });
+    const { deps, sent } = fakes(pool, { rotation: true, now: ROTATION_DAY });
+    const out = await ingestRotation(deps);
+    expect("planned" in out && out.planned).toHaveLength(3);
+    const starts = sent.filter((s) => s.queue === Q.startBoardRun);
+    expect(starts).toHaveLength(3);
+    expect(starts[0]!.data).toMatchObject({ limit: 35, title: expect.any(String), vertical: expect.any(String) });
+    // A retried cron job the same day starts nothing more.
+    expect(await ingestRotation(deps)).toEqual({ skipped: "already planned today" });
+    expect(sent.filter((s) => s.queue === Q.startBoardRun)).toHaveLength(3);
   });
 
   it("unknown employee count → domain age tags the size, asked once per domain, never drops (§6.7)", async () => {

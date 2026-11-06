@@ -28,6 +28,9 @@ select pg_temp.try('authenticated', 'operator delete company', 'blocked', 'delet
 select pg_temp.try('authenticated', 'operator read seen_items', 'blocked', 'select count(*) from seen_items');
 select pg_temp.try('authenticated', 'operator read spend_counters', 'allowed', 'select count(*) from spend_counters');
 select pg_temp.try('authenticated', 'operator read resolve_queue', 'blocked', 'select count(*) from resolve_queue');
+select pg_temp.try('authenticated', 'operator read rotation_days', 'allowed', 'select count(*) from rotation_days');
+select pg_temp.try('anon', 'anon read rotation_days', 'blocked', 'select count(*) from rotation_days');
+select pg_temp.try('authenticated', 'operator write rotation_days', 'blocked', 'insert into rotation_days (day, slots) values (''2000-01-01'', ''[]'')');
 select pg_temp.try('anon', 'anon read resolve_queue', 'blocked', 'select count(*) from resolve_queue');
 -- Status trigger (migration 0002): the inbox's Reject / Undo path, run as the operator.
 update companies set priority_score = 77, status = 'new', score_breakdown = '{"families":["job_post"]}' where domain = 'rls-test.example';

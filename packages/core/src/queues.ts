@@ -11,6 +11,7 @@ export const Q = {
   resolveBatch: "resolve-batch",
   sniffSeeds: "sniff-seeds",
   sniffDomain: "sniff-domain",
+  ingestRotation: "ingest-rotation",
   pollRuns: "poll-runs",
   reconcileApify: "reconcile-apify",
   deadLetter: "dead-letter",

@@ -33,8 +33,10 @@ export const SIZE_LABEL: Record<SizeTier, string> = {
 
 export const SOURCE_LABEL: Record<SourceType, string> = {
   job_post: "Job post",
-  linkedin_post: "LinkedIn post",
-  social_post: "Reddit post",
+  // LinkedIn and Reddit posts show under one label; the platform appears only as the post's
+  // corner icon (PostLink).
+  linkedin_post: "Social digest",
+  social_post: "Social digest",
   dom_sniff: "Website check",
   tech_stack: "Tech stack",
   inbound: "Inbound (/roast)",
@@ -42,8 +44,8 @@ export const SOURCE_LABEL: Record<SourceType, string> = {
 
 export const FAMILY_LABEL: Record<SourceFamily, string> = {
   job_post: "Job post",
-  linkedin_post: "LinkedIn",
-  social_post: "Reddit",
+  linkedin_post: "Social digest",
+  social_post: "Social digest",
   website: "Website",
   inbound: "Inbound",
 };
