@@ -45,7 +45,10 @@ export type AuthorRelation = z.infer<typeof AuthorRelation>;
 
 // implied (2026-11-06): an upbeat or neutral post — hiring, growth, a thank-you — that shows
 // manual, repetitive or headcount-driven work at the author's own business.
-export const Stance = z.enum(["suffering", "implied", "selling", "commenting"]);
+// solved (2026-11-07): a problem their own business had and how they dealt with it; solved_how
+// says how, and decides the lead (by hand or partly → a lead; with software → Company OS, lower).
+export const Stance = z.enum(["suffering", "implied", "solved", "selling", "commenting"]);
+export const SolvedHow = z.enum(["by_hand", "partly", "with_software"]);
 export const AutomationFit = z.enum(["none", "some", "high"]);
 // Which product to pitch first (PRD §1.1): null on cards extracted before 2026-11-07.
 export const ProductLayer = z.enum(PRODUCT_LAYERS);
@@ -71,6 +74,7 @@ export const StructuredIntelligence = z.object({
   known_large_brand: z.boolean(),
   author_relation: AuthorRelationOut.nullable(), // LinkedIn/Reddit only
   stance: Stance.nullable(), // LinkedIn/Reddit only
+  solved_how: SolvedHow.nullable().default(null), // stance "solved" only
 });
 export type StructuredIntelligence = z.infer<typeof StructuredIntelligence>;
 

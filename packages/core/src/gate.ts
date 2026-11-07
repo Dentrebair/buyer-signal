@@ -6,6 +6,7 @@
 // same atom, since text and atoms are both split into words.
 import { MINED_ATOMS } from "./atoms.ts";
 import type { MinedCategory } from "./mining.ts";
+import { isFixerHire } from "./tier.ts";
 import type { VerticalSlug } from "./verticals.ts";
 
 export type AtomCategory = MinedCategory;
@@ -169,7 +170,9 @@ export function gateJobPost(post: { title: string; description: string }, vertic
   if (matches.some((m) => m.category === "RECRUITER")) return { pass: false, reason: "recruiter", matches };
   const physical = NON_DESK_TITLE.test(post.title) || matchTrie(trie, post.title).some((m) => m.category === "PHYSICAL_ROLE");
   const work = matches.filter((m) => WORK.has(m.category));
-  if (work.length < 2 || physical) return { pass: false, reason: "trie", matches };
+  // §1.1: a fixer hire is the signal itself; its post describes outcomes, rarely data-entry work.
+  const fixer = isFixerHire(post.title, post.description);
+  if ((work.length < 2 && !fixer) || physical) return { pass: false, reason: "trie", matches };
   // §6.6: any INFORMATION_SILO or OWNER_DEPENDENCY atom forces founder_dependency_flag (+10, once).
   const founderDependency = matches.some((m) => m.category === "INFORMATION_SILO" || m.category === "OWNER_DEPENDENCY");
   return { pass: true, matches, founderDependency };

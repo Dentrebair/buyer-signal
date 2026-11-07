@@ -59,11 +59,12 @@ signal's tier; the inbox filters by it. The tier sits beside the score; it does 
 - Built: both layers above on every new card; tiers on every signal (68 stored signals backfilled
   by `npm run tier:backfill`: 0 High, 1 Medium, 67 Low — the Indeed desk-role spine is the Low
   tier); inbox tags and Urgency / Pitch filters.
+- Built 2026-11-07 (gaps 1–2):
+  - "Solved" social posts: stance `solved` with `solved_how`. By hand or partly → a lead at intent −15 (like Implied); with software → a lead at −30, its pitch forced to Company OS. Tags: Solved by labor, Partly solved, Already automating.
+  - Fixer hires: `FIXER_TITLES` (Chief of Staff, Director / Head of Operations, Operations Manager, Process Improvement Manager, Business Operations Manager) as "Fixer hires (any vertical)" in Run now. A fixer run has no vertical: the AI reads it from each post (the seed extraction). A fixer title or fixer wording passes the job-post gate without two work atoms, and its tier is High. Not yet in the rotation; the bandit (§4.1c) adds them as arms.
 - Gaps, in build order:
-  1. "Solved" social posts — solved by hand or partly solved → lead; solved with software → low-priority lead tagged Company OS.
-  2. Fixer titles in the job-post rotation (today's titles are all Low-tier desk roles).
-  3. 5+ disconnected tools as a counted signal.
-  4. Employee reviews (Glassdoor's terms forbid scraping: needs a compliant source) and forum tool-stack questions (Reddit, Sprint 4).
+  1. 5+ disconnected tools as a counted signal.
+  2. Employee reviews (Glassdoor's terms forbid scraping: needs a compliant source) and forum tool-stack questions (Reddit, Sprint 4).
 - Cards extracted before 2026-11-07 have no product layer; re-extracting them costs about $0.0005 each.
 
 ## 2. Summary of decisions

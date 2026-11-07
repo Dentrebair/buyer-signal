@@ -9,7 +9,7 @@ export const PRODUCT_LAYERS = ["knowledge_base", "company_brain", "company_os"] 
 export const PRODUCT_LABEL: Record<(typeof PRODUCT_LAYERS)[number], string> = { knowledge_base: "Knowledge Base", company_brain: "Company Brain", company_os: "Company OS" };
 
 // 🔴 "Fixer" hires: someone brought in to bring order to an owner-run business.
-const FIXER_TITLE = /\b(chief of staff|director of operations|operations director|head of operations|process (consultant|improvement|excellence)|business process (analyst|manager))\b/i;
+const FIXER_TITLE = /\b(chief of staff|director of operations|operations director|head of operations|process (consultant|improvement|excellence)|business process (analyst|manager)|business operations manager)\b/i;
 const FIXER_TEXT = /\b(bring order to (the )?chaos|put(ting)? out fires|build (our|the) operating system|from scratch\b.{0,40}\b(process|systems?|operations))/i;
 // 🔴 Founder vents: the owner is the bottleneck, in their own words.
 const FOUNDER_VENT =
@@ -26,6 +26,10 @@ const BARE_SOP = /^(sop\*?|standard operating procedure\*?)$/i;
 const SOP_BUILDING = /\b(creat|writ|develop|build|document|draft|maintain|updat|organi[sz])\w*\b[^.]{0,40}\b(sops?|standard operating procedures?)\b/i;
 // Owner dependency names the owner.
 const OWNER = /\b(owner|founder|ceo|managing director|proprietor|principal|boss|answering questions)\b/i;
+
+export function isFixerHire(title: string, text = ""): boolean {
+  return FIXER_TITLE.test(title) || FIXER_TEXT.test(text);
+}
 
 export function urgencyTier(x: {
   sourceType: string; // contracts SourceType
@@ -44,7 +48,7 @@ export function urgencyTier(x: {
           ? OWNER.test(m.atom)
           : false;
   const has = (c: string) => x.matches.some((m) => m.category === c && counts(m));
-  if (x.sourceType === "job_post" && (FIXER_TITLE.test(x.title ?? "") || FIXER_TEXT.test(x.text))) return "high";
+  if (x.sourceType === "job_post" && isFixerHire(x.title ?? "", x.text)) return "high";
   if (x.authorRelation === "founder_owner" && (has("OWNER_DEPENDENCY") || FOUNDER_VENT.test(x.text))) return "high";
   if (has("INFORMATION_SILO") || has("INTEGRATION_DEBT") || has("OWNER_DEPENDENCY")) return "medium";
   return "low";

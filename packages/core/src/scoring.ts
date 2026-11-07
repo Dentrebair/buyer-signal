@@ -36,15 +36,24 @@ export function sourceFamily(type: SourceType): SourceFamily {
   return type === "dom_sniff" || type === "tech_stack" ? "website" : type;
 }
 
-// An implied post (Stance) states no problem: the pain is inferred, so buying intent is lower.
+// An implied post (Stance) states no problem: the pain is inferred, so buying intent is lower. A
+// post solved by hand or partly is scored the same; one solved with software has less pain left.
 export const IMPLIED_INTENT_PENALTY = 15;
+export const AUTOMATED_INTENT_PENALTY = 30;
 
-export function weightsFor(type: SourceType, author?: AuthorRelation | null, stance?: string | null): Weights {
+function intentPenalty(stance?: string | null, solvedHow?: string | null): number {
+  if (stance === "implied") return IMPLIED_INTENT_PENALTY;
+  if (stance === "solved") return solvedHow === "with_software" ? AUTOMATED_INTENT_PENALTY : IMPLIED_INTENT_PENALTY;
+  return 0;
+}
+
+export function weightsFor(type: SourceType, author?: AuthorRelation | null, stance?: string | null, solvedHow?: string | null): Weights {
   if (type === "linkedin_post" || type === "social_post") {
     if (!author) throw new Error(`${type} needs an author_relation`);
     const w = (type === "linkedin_post" ? LINKEDIN : REDDIT)[author];
     if (!w) throw new Error(`${type} does not accept author_relation=${author}`);
-    return stance === "implied" ? { E: w.E, I: w.I - IMPLIED_INTENT_PENALTY } : w;
+    const p = intentPenalty(stance, solvedHow);
+    return p ? { E: w.E, I: w.I - p } : w;
   }
   return FIXED[type];
 }

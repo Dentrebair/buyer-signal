@@ -2,6 +2,7 @@
  * nav: kept (sidebar of queues and filters, the project's own shell) · signature: the ledger, companies ranked by score in mono figures · states: empty, pending row, saving, error, undo toast, live run progress
  * axes: light/grotesk-sans/chromatic-magenta (paper brightened and accent made vivid at the operator's request) · posture: restrained · contrast: pass · modes: light+dark · v2.0.0 */
 /* Hallmark · pre-emit critique: P4 H3 E4 S4 R4 V3 · weakest: V, the dossier was four tinted cards in four colours; now one sheet, ruled sections, colour only on the action and the selection */
+/* Hallmark · dropped onChange={(e) => pickVertical(e.target.value as VerticalSlug)} · not dropped: the same handler now casts to JobScope, since the vertical select gained "Fixer hires (any vertical)" */
 @import url("./tokens.css");
 @import url("./base.css");
 
@@ -45,6 +46,8 @@ a { text-decoration: none; }
 .layer-company_os { --c: var(--opt-indigo); --c-bg: var(--opt-indigo-bg); --c-line: var(--opt-indigo-line); }
 .verdict-green { --c: var(--opt-green); --c-bg: var(--opt-green-bg); --c-line: var(--opt-green-line); }
 .verdict-amber, .verdict-implied { --c: var(--opt-violet); --c-bg: var(--opt-violet-bg); --c-line: var(--opt-violet-line); }
+.verdict-solved-by_hand, .verdict-solved-partly { --c: var(--opt-amber); --c-bg: var(--opt-amber-bg); --c-line: var(--opt-amber-line); }
+.verdict-solved-with_software { --c: var(--opt-indigo); --c-bg: var(--opt-indigo-bg); --c-line: var(--opt-indigo-line); }
 /* Facts: lighter than tags (no outline), one hue per kind of fact. */
 .fact { border-color: transparent; font-weight: 500; }
 .fact svg { flex-shrink: 0; }

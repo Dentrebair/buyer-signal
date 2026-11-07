@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { Play } from "@phosphor-icons/react";
 import { SOCIAL_TOPICS } from "@bs/core/social";
-import { COUNTRIES, SEARCH_TITLES, VERTICALS, VERTICAL_MARKETS, type Country, type VerticalSlug } from "@bs/core/verticals";
+import { COUNTRIES, FIXER_TITLES, SEARCH_TITLES, VERTICALS, VERTICAL_MARKETS, type Country, type VerticalSlug } from "@bs/core/verticals";
 import { type RunResult, runJobPosts, runSocial, runSource } from "@/app/radar/actions.ts";
 import { Meta } from "./Meta.tsx";
 
@@ -19,24 +19,29 @@ function Result({ r }: { r: RunResult | null }) {
   );
 }
 
+// "" = fixer hires (§1.1): any vertical, the AI reads it from each post.
+type JobScope = VerticalSlug | "";
+const titlesFor = (v: JobScope): readonly string[] => (v ? SEARCH_TITLES[v] : FIXER_TITLES);
+const marketsFor = (v: JobScope): Country[] => (v ? VERTICAL_MARKETS[v] : (Object.keys(COUNTRIES) as Country[]));
+
 export function RunJobPosts({ next }: { next: { vertical: VerticalSlug; country: Country; title: string } | null }) {
   const [open, setOpen] = useState(false);
-  const [vertical, setVertical] = useState<VerticalSlug>(next?.vertical ?? "accounting");
-  const [country, setCountry] = useState<Country>(next?.country ?? VERTICAL_MARKETS[vertical][0]!);
-  const [title, setTitle] = useState(next?.title ?? SEARCH_TITLES[vertical][0]!);
+  const [vertical, setVertical] = useState<JobScope>(next?.vertical ?? "accounting");
+  const [country, setCountry] = useState<Country>(next?.country ?? marketsFor(vertical)[0]!);
+  const [title, setTitle] = useState(next?.title ?? titlesFor(vertical)[0]!);
   const [limit, setLimit] = useState(35);
   const [result, setResult] = useState<RunResult | null>(null);
   const [pending, start] = useTransition();
 
-  const pickVertical = (v: VerticalSlug) => {
+  const pickVertical = (v: JobScope) => {
     setVertical(v);
-    if (!VERTICAL_MARKETS[v].includes(country)) setCountry(VERTICAL_MARKETS[v][0]!);
-    setTitle(SEARCH_TITLES[v][0]!);
+    if (!marketsFor(v).includes(country)) setCountry(marketsFor(v)[0]!);
+    setTitle(titlesFor(v)[0]!);
   };
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     start(async () => {
-      const r = await runJobPosts({ vertical, country, title, limit }).catch((err: Error) => ({ ok: false as const, message: err.message }));
+      const r = await runJobPosts({ vertical: vertical || null, country, title, limit }).catch((err: Error) => ({ ok: false as const, message: err.message }));
       setResult(r);
       if (r.ok) (setOpen(false), announceRun());
     });
@@ -55,18 +60,19 @@ export function RunJobPosts({ next }: { next: { vertical: VerticalSlug; country:
     <form className="run-form" onSubmit={submit} aria-label="Run job posts now">
       <label className="field">
         Vertical
-        <select value={vertical} onChange={(e) => pickVertical(e.target.value as VerticalSlug)}>
+        <select value={vertical} onChange={(e) => pickVertical(e.target.value as JobScope)}>
           {(Object.keys(VERTICALS) as VerticalSlug[]).map((v) => (
             <option key={v} value={v}>
               {VERTICALS[v]}
             </option>
           ))}
+          <option value="">Fixer hires (any vertical)</option>
         </select>
       </label>
       <label className="field">
         Market
         <select value={country} onChange={(e) => setCountry(e.target.value as Country)}>
-          {VERTICAL_MARKETS[vertical].map((c) => (
+          {marketsFor(vertical).map((c) => (
             <option key={c} value={c}>
               {COUNTRIES[c]}
             </option>
@@ -76,7 +82,7 @@ export function RunJobPosts({ next }: { next: { vertical: VerticalSlug; country:
       <label className="field">
         Search title
         <select value={title} onChange={(e) => setTitle(e.target.value)}>
-          {SEARCH_TITLES[vertical].map((t) => (
+          {titlesFor(vertical).map((t) => (
             <option key={t} value={t}>
               {t}
             </option>

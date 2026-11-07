@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { matchAtoms, urgencyTier } from "../src/index.ts";
+import { gateJobPost, matchAtoms, urgencyTier, weightsFor } from "../src/index.ts";
 
 const job = (title: string, description: string) => {
   const text = `${title}\n\n${description}`;
@@ -27,5 +27,16 @@ describe("urgency tier (§1.1): fixed rules, not the AI's opinion", () => {
     expect(urgencyTier({ sourceType: "dom_sniff", text: "static pdf form", matches: [] })).toBe("low");
     // A founder post with no bottleneck wording is not a vent.
     expect(post("We still key every invoice by hand at Acme.")).toBe("low");
+  });
+
+  it("fixer hires pass the job-post gate without data-entry keywords; desk roles still need two", () => {
+    expect(gateJobPost({ title: "Chief of Staff", description: "Partner with our founder to scale the company." }).pass).toBe(true);
+    expect(gateJobPost({ title: "Office Assistant", description: "Partner with our founder to scale the company." }).pass).toBe(false);
+  });
+
+  it("solved posts: by hand or partly score like implied; with software scores lower", () => {
+    expect(weightsFor("linkedin_post", "founder_owner", "solved", "by_hand")).toEqual({ E: 85, I: 75 });
+    expect(weightsFor("linkedin_post", "founder_owner", "solved", "partly")).toEqual({ E: 85, I: 75 });
+    expect(weightsFor("linkedin_post", "founder_owner", "solved", "with_software")).toEqual({ E: 85, I: 60 });
   });
 });

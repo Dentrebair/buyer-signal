@@ -47,6 +47,17 @@ export const VERTICAL_MARKETS: Record<VerticalSlug, Country[]> = {
   automotive: ALL,
 };
 
+// 🔴 "Fixer" hires (PRD §1.1): someone brought in to bring order to an owner-run business. They
+// are not tied to one vertical, so a fixer run has no vertical and the AI reads it from the post.
+export const FIXER_TITLES = [
+  "chief of staff",
+  "director of operations",
+  "head of operations",
+  "operations manager",
+  "process improvement manager",
+  "business operations manager",
+] as const;
+
 // Desk-role Indeed search titles per vertical (§4.1 rotation). Starting picks for phrase mining
 // (§6.3); the rotation keeps the ones whose posts pass the Bouncer.
 export const SEARCH_TITLES: Record<VerticalSlug, string[]> = {

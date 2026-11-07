@@ -153,7 +153,7 @@ function Runs({ runs, kind, shownId = null }: { runs: BoardRun[]; kind: "jobs" |
               <td>{ageLabel(r.started_at)}</td>
               <td>
                 <span className="run-search">{r.query_title ? `“${r.query_title}”` : "No search title"}</span>
-                <Facts items={[["vertical", r.vertical && verticalLabel(r.vertical)], ["country", countryLabel(r.country)]]} />
+                <Facts items={[["vertical", r.vertical ? verticalLabel(r.vertical) : kind === "jobs" && "Fixer hires, any vertical"], ["country", countryLabel(r.country)]]} />
               </td>
               <td>
                 <RunProgress status={r.status} startedAt={r.started_at} completedAt={r.completed_at} checking={r.checking} kind={kind} />
@@ -227,6 +227,7 @@ function SocialLeads({ run, leads }: { run: BoardRun; leads: SocialLead[] }) {
                       Implied
                     </span>
                   )}
+                  {l.stance === "solved" && l.solved_how && <SolvedTag how={l.solved_how} />}
                 </div>
                 {l.symptom && <p className="social-snippet">{l.symptom}</p>}
                 <p className="muted social-ai">“{l.snippet}”</p>
@@ -290,4 +291,20 @@ function AiDrops({ drops }: { drops: SocialDrop[] }) {
       </ul>
     </details>
   );
+}
+
+// How a "solved" post dealt with its problem (§1.1): by hand or partly is a lead like Implied;
+// with software is a lower lead for Company OS.
+const SOLVED: Record<string, { label: string; title: string }> = {
+  by_hand: { label: "Solved by labor", title: "They fixed it with people or a manual workaround, so the work is still manual" },
+  partly: { label: "Partly solved", title: "They automated part of it; the rest is still done by hand" },
+  with_software: { label: "Already automating", title: "A tool removed this work; pitch joining their tools up (Company OS)" },
+};
+function SolvedTag({ how }: { how: string }) {
+  const s = SOLVED[how];
+  return s ? (
+    <span className={`verdict verdict-solved-${how}`} title={s.title}>
+      {s.label}
+    </span>
+  ) : null;
 }

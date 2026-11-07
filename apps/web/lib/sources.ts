@@ -27,6 +27,7 @@ export interface SocialLead {
   snippet: string;
   posted_at: string | null;
   stance: string | null;
+  solved_how: string | null;
   symptom: string | null;
   company_id: string | null;
   company_name: string | null;
@@ -78,7 +79,7 @@ export function loadSources(runId?: string | null): Promise<Sources> {
     const leads = shown
       ? (
           await c.query<SocialLead>(
-            `select s.id, s.url, s.snippet, s.posted_at, s.stance, s.symptom, ch.company_id, co.company_name, ch.signal_score,
+            `select s.id, s.url, s.snippet, s.posted_at, s.stance, ch.structured_intelligence ->> 'solved_how' solved_how, s.symptom, ch.company_id, co.company_name, ch.signal_score,
                     (ch.structured_intelligence ->> 'automatable_task_percentage')::int automatable_pct
                from social_results s
                left join challenges ch on ch.source_url = s.url and ch.source_type = 'linkedin_post'

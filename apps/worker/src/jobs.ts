@@ -43,6 +43,7 @@ import {
   bareDomain,
   blastRadius,
   buildJobExtraction,
+  buildSeedExtraction,
   buildResolve,
   checkFreshness,
   classifySize,
@@ -390,10 +391,10 @@ export async function fetchSocial(d: Deps, job: FetchSocial): Promise<Partial<Re
 }
 
 // Author check (Q59): only the business's own people showing their own manual work — as a
-// complaint (suffering) or in an upbeat post (implied) — with the company named. Then the same
-// path as a job post.
+// complaint (suffering), in an upbeat post (implied) or in how they solved it (solved) — with the
+// company named. Then the same path as a job post.
 const OWN_AUTHORS = new Set(["founder_owner", "employee", "company_page"]);
-const KEPT_STANCES = new Set(["suffering", "implied"]);
+const KEPT_STANCES = new Set(["suffering", "implied", "solved"]);
 
 export async function extractSocial(d: Deps, job: ExtractSocial): Promise<string> {
   const out = await d.llm.json("extraction", buildSocialExtraction({ url: job.url, text: job.text }));
@@ -408,7 +409,9 @@ export async function extractSocial(d: Deps, job: ExtractSocial): Promise<string
     await verdict("no_company");
     return drop(d, job.runId, "dropped_unresolved_count");
   }
-  const { company_name, vertical, ...rest } = si;
+  const { company_name, vertical, ...extracted } = si;
+  // Solved with software: they have tools but nothing joining them up, so pitch Company OS (§1.1).
+  const rest = si.stance === "solved" && si.solved_how === "with_software" ? { ...extracted, product_layer: "company_os" as const } : extracted;
   const asPost: ExtractLlm = {
     runId: job.runId,
     vertical: vertical ?? job.vertical,
@@ -437,10 +440,15 @@ export async function extractSocial(d: Deps, job: ExtractSocial): Promise<string
 export async function extractLlm(d: Deps, input: ExtractLlmInput): Promise<string> {
   const job = ExtractLlm.parse(input); // fills source/author for job posts
   const post = toPost(job);
-  const out = await d.llm.json("extraction", buildJobExtraction({ title: post.title, company: post.company, location: post.city, description: post.description }));
-  const si = out.data;
-
-  return toCard(d, job, si, out.model);
+  const ep = { title: post.title, company: post.company, location: post.city, description: post.description };
+  // A run with no vertical (fixer hires, §1.1) asks the AI for it, as the Sprint 0 seed did.
+  if (job.vertical === null) {
+    const out = await d.llm.json("extraction", buildSeedExtraction(ep));
+    const { vertical, ...si } = out.data;
+    return toCard(d, { ...job, vertical }, si, out.model);
+  }
+  const out = await d.llm.json("extraction", buildJobExtraction(ep));
+  return toCard(d, job, out.data, out.model);
 }
 
 // Shared by job posts and LinkedIn posts once extracted: fit → size → resolve → card.
@@ -479,7 +487,7 @@ function toPost(job: ExtractLlm): RawJobPost {
 }
 
 function provisionalScore(job: ExtractLlm, si: StructuredIntelligence): number {
-  return signalScore(job.source, weightsFor(job.source, job.author, si.stance), blastRadius(si.blast_radius, job.founderDependency));
+  return signalScore(job.source, weightsFor(job.source, job.author, si.stance, si.solved_how), blastRadius(si.blast_radius, job.founderDependency));
 }
 
 // Upsert company + challenge + score + seed in one transaction (§5.1 steps 7–8). Safe to run
@@ -496,7 +504,7 @@ async function persistCard(d: Deps, x: ResolvePayload, domain: string | null): P
   const registeredAt = domain && size.tier === "unknown" ? await domainAge(d, domain) : null;
   if (registeredAt) size = sizeOf(registeredAt);
   if (!size.keep) throw new Error("persistCard: domain age never drops a company");
-  const w = weightsFor(job.source, job.author, si.stance);
+  const w = weightsFor(job.source, job.author, si.stance, si.solved_how);
   const B = blastRadius(si.blast_radius, job.founderDependency);
   // LinkedIn: the snippet only (§4.1a); its title is the author's name, so it is never stored.
   const evidence = job.source === "linkedin_post" ? post.description : `${post.title}\n\n${post.description}`;

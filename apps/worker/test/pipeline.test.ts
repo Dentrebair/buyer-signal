@@ -51,6 +51,7 @@ const si: StructuredIntelligence = {
   known_large_brand: false,
   author_relation: null,
   stance: null,
+  solved_how: null,
 };
 
 function fakes(
@@ -78,7 +79,9 @@ function fakes(
         ? { data: req.parse({ domain: over.resolveTo?.domain ?? null, confidence: over.resolveTo?.confidence ?? "high" }) as any, model: "fake/model", costUsd: 0, citations: over.resolveTo?.cited ?? [] }
         : req.schemaName === "social_extraction"
           ? { data: req.parse({ ...si, ...over.social }) as any, model: "fake/model", costUsd: 0 }
-          : { data: req.parse(si) as any, model: "fake/model", costUsd: 0 },
+          : req.schemaName === "seed_extraction" // a run with no vertical asks for it
+            ? { data: req.parse({ ...si, vertical: "construction" }) as any, model: "fake/model", costUsd: 0 }
+            : { data: req.parse(si) as any, model: "fake/model", costUsd: 0 },
   };
   const send: Send = async (queue, data, opts) => void sent.push({ queue, data, ...(opts ? { opts } : {}) });
   const rdapCalls: string[] = [];
@@ -282,6 +285,14 @@ describe.skipIf(!process.env.DATABASE_URL)("worker pipeline (database)", { timeo
     const imCh = (await pool.query("select buying_intent, c.vertical from challenges ch join companies c on c.id = ch.company_id where ch.natural_id = $1", [implied.naturalId])).rows[0];
     expect(imCh).toMatchObject({ buying_intent: 75, vertical: "logistics" });
     await pool.query("delete from resolve_queue where natural_id = $1", [implied.naturalId]);
+
+    // Solved with software: still a lead, lower intent, pitched as Company OS (§1.1).
+    const solved = { ...fresh.data, naturalId: "post:linkedin:solved-test", url: `${SOCIAL_FRESH}-solved` };
+    const so = fakes(pool, { social: { author_relation: "founder_owner", stance: "solved", solved_how: "with_software", company_name: "Social Test Co", vertical: null } });
+    expect(await extractSocial(so.deps, solved)).toMatch(/^persisted/);
+    const soCh = (await pool.query("select buying_intent, structured_intelligence ->> 'product_layer' layer from challenges where natural_id = $1", [solved.naturalId])).rows[0];
+    expect(soCh).toEqual({ buying_intent: 60, layer: "company_os" });
+    await pool.query("delete from resolve_queue where natural_id = $1", [solved.naturalId]);
     // Its website-search row would otherwise take the single search of the resolve test below.
     await pool.query("delete from resolve_queue where natural_id = $1", [fresh.data.naturalId]);
     await pool.query("delete from ingestion_runs where apify_run_id = $1", [RUN_ID]);
@@ -327,6 +338,14 @@ describe.skipIf(!process.env.DATABASE_URL)("worker pipeline (database)", { timeo
     await extractLlm(b.deps, job("2", "Age Test Co", `https://${AGE_DOMAIN}`));
     expect(b.rdapCalls).toEqual([]);
     expect((await sizeOf(AGE_DOMAIN)).size_tier).toBe("startup");
+
+    // A fixer hire (§1.1) runs with no vertical: the AI reads it from the post, and the tier is High.
+    const fixerDomain = "age-test-fixer.example";
+    const fixer = { ...job("fixer", "Fixer Test Co", `https://${fixerDomain}`), vertical: null };
+    fixer.post.title = "Chief of Staff";
+    expect(await extractLlm(fakes(pool).deps, fixer)).toBe(`persisted ${fixerDomain}`);
+    const fx = (await pool.query("select c.vertical, ch.urgency_tier from challenges ch join companies c on c.id = ch.company_id where c.domain = $1", [fixerDomain])).rows[0];
+    expect(fx).toEqual({ vertical: "construction", urgency_tier: "high" });
 
     // Lookup fails → size unknown, card still made. Old domain → unknown too. Known band → no lookup.
     const c = fakes(pool, { ages: { "age-test-down.example": "error", "age-test-old.example": new Date("2002-07-29T00:00:00Z") } });

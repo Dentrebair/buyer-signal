@@ -354,6 +354,8 @@ function Dossier({ company: c, view, nextHref, selfHref }: { company: Company; v
                         ch.structured_intelligence?.stance === "implied" && (
                           <span title="An upbeat or neutral post that shows manual work; the pain is inferred, so it scores lower">Implied</span>
                         ),
+                        ch.structured_intelligence?.stance === "solved" &&
+                          { by_hand: "Solved by labor", partly: "Partly solved", with_software: "Already automating" }[ch.structured_intelligence.solved_how ?? "by_hand"],
                         ageLabel(ch.posted_at),
                         <>
                           Signal <span className="num">{ch.signal_score}</span>
