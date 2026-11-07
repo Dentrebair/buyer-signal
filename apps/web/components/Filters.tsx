@@ -20,7 +20,7 @@ export function FilterSelect({ name, label, options }: { name: string; label: st
   return (
     <label className="field">
       {label}
-      <select value={sp.get(name) ?? ""} onChange={(e) => onChange(e.target.value)}>
+      <select value={sp.get(name) ?? ""} onChange={(e) => onChange(e.target.value)} className={sp.get(name) ? "is-set" : undefined}>
         <option value="">All</option>
         {options.map((o) => (
           <option key={o.value} value={o.value}>

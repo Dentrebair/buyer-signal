@@ -6,6 +6,7 @@ import { Play } from "@phosphor-icons/react";
 import { SOCIAL_TOPICS } from "@bs/core/social";
 import { COUNTRIES, SEARCH_TITLES, VERTICALS, VERTICAL_MARKETS, type Country, type VerticalSlug } from "@bs/core/verticals";
 import { type RunResult, runJobPosts, runSocial, runSource } from "@/app/radar/actions.ts";
+import { Meta } from "./Meta.tsx";
 
 // Indeed price (§4.1): $0.0001 per post + $0.001 per run start.
 const apifyCost = (posts: number) => posts * 0.0001 + 0.001;
@@ -253,10 +254,15 @@ export function RunProgress(x: { status: string; startedAt: string; completedAt:
     return () => clearInterval(t);
   }, [done]);
   const start = Date.parse(x.startedAt);
-  if (x.status === "failed") return <span className="is-error">Failed</span>;
+  if (x.status === "failed") return <span className="run-state run-failed">Failed</span>;
   if (done) {
     const end = x.completedAt ? Date.parse(x.completedAt) : null;
-    return <span>Done{end && x.kind === "jobs" ? <span className="muted num"> in {clock(end - start)}</span> : null}</span>;
+    return (
+      <span className="run-progress">
+        <span className="run-state run-done">Done</span>
+        {end && x.kind === "jobs" ? <span className="meta">Took {clock(end - start)}</span> : null}
+      </span>
+    );
   }
   const step =
     x.status === "starting"
@@ -265,15 +271,19 @@ export function RunProgress(x: { status: string; startedAt: string; completedAt:
         ? { n: 1, label: x.kind === "social" ? "Searching Google" : "Collecting posts", usual: x.kind === "social" ? "under 1 min" : "1–3 min" }
         : x.status === "fetching"
           ? { n: 2, label: "Reading results", usual: "a few seconds" }
-          : { n: 3, label: `AI reading posts · ${x.checking} left`, usual: `about ${Math.max(1, Math.round((x.checking * 6) / 2))}s` };
+          : { n: 3, label: `AI reading posts, ${x.checking} left`, usual: `about ${Math.max(1, Math.round((x.checking * 6) / 2))}s` };
   return (
     <span className="run-progress" role="status">
-      <span className="run-step">
-        <span className="run-dot" aria-hidden /> {step.label}
-      </span>
-      <span className="muted">
-        Step {step.n} of 3 · <span className="num">{now === null ? "…" : clock(now - start)}</span> · usually {step.usual}
-      </span>
+      <span className="run-state run-active">{step.label}</span>
+      <Meta
+        items={[
+          `Step ${step.n} of 3`,
+          <span key="t" className="num">
+            {now === null ? "…" : clock(now - start)}
+          </span>,
+          `Usually ${step.usual}`,
+        ]}
+      />
     </span>
   );
 }

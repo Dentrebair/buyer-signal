@@ -3,6 +3,7 @@
 import { ArrowSquareOut, Browser, Envelope, Phone, WhatsappLogo } from "@phosphor-icons/react/ssr";
 import type { SiteAudit, Tech } from "@bs/core";
 import { ageLabel } from "@/lib/labels.ts";
+import { Meta } from "./Meta.tsx";
 
 export interface AuditCompany {
   reachable: boolean | null;
@@ -28,7 +29,7 @@ export function WebsiteAudit({ company: c }: { company: AuditCompany }) {
   const notable = tech.filter((t) => t.categories.some((cat) => NOTABLE.has(cat)));
 
   return (
-    <section className="card tone-amber audit" aria-labelledby="audit">
+    <section className="card audit" aria-labelledby="audit">
       <h3 id="audit">
         <Browser size={15} aria-hidden /> Website audit
       </h3>
@@ -56,9 +57,18 @@ export function WebsiteAudit({ company: c }: { company: AuditCompany }) {
             </div>
           )}
           <Contacts c={c} />
-          <p className="audit-foot muted">
-            Checked {ageLabel(c.last_sniffed_at)} · {a.pages?.length ?? 1} page{(a.pages?.length ?? 1) === 1 ? "" : "s"} · {tech.length} technologies detected
-          </p>
+          <Meta
+            className="audit-foot"
+            items={[
+              `Checked ${ageLabel(c.last_sniffed_at)}`,
+              <>
+                <span className="num">{a.pages?.length ?? 1}</span> page{(a.pages?.length ?? 1) === 1 ? "" : "s"}
+              </>,
+              <>
+                <span className="num">{tech.length}</span> technologies detected
+              </>,
+            ]}
+          />
         </>
       )}
     </section>

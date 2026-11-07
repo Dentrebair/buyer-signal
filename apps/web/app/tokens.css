@@ -1,0 +1,52 @@
+:root,
+[data-theme="light"] {
+  color-scheme: light;
+  --space-3xs: 2px; --space-2xs: 4px; --space-xs: 8px; --space-sm: 12px; --space-md: 16px; --space-lg: 24px; --space-xl: 40px; --space-2xl: 64px; --space-3xl: 96px; --space-4xl: 144px;
+  --text-xs: 0.75rem; --text-sm: 0.875rem; --text-md: 1rem; --text-lg: 1.2rem; --text-xl: 1.44rem; --text-2xl: 1.728rem; --text-3xl: 2.074rem;
+  --text-display-s: 1.44rem; --text-display: 1.728rem; --text-section: 1.2rem; --text-title: 1rem; --text-lead: 1rem;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1); --ease-in: cubic-bezier(0.7, 0, 0.84, 0); --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-micro: 120ms; --dur-short: 220ms; --dur-long: 420ms;
+  --color-error: oklch(45% 0.17 27); --color-success: oklch(42% 0.11 150);
+  --container: 1440px; --gutter: 64px; --gap-columns: 32px; --section-gap-s: 120px; --section-gap: 144px; --section-gap-l: 176px;
+  --z-base: 1; --z-raised: 10; --z-dropdown: 100; --z-sticky: 200; --z-sticky-nav: 300; --z-modal: 400; --z-toast: 500; --z-tooltip: 600;
+  /* Operator asked for brighter (2026-11-07): near-white cool paper, a vivid fuchsia for actions. */
+  --color-paper: oklch(97.5% 0.004 250); --color-paper-2: oklch(95.5% 0.006 250); --color-paper-3: oklch(92% 0.008 250);
+  --color-ink: oklch(18% 0.020 260); --color-ink-2: oklch(30% 0.020 260); --color-muted: oklch(47% 0.018 255);
+  --color-rule: oklch(89% 0.008 250); --color-rule-2: oklch(30% 0.020 260);
+  --color-accent: oklch(56% 0.250 345); --color-accent-2: oklch(50% 0.230 345); --color-accent-ink: oklch(99% 0.003 250); --color-focus: oklch(58% 0.240 345);
+  --color-sheet: oklch(99.2% 0.002 250);
+  --font-display: var(--font-hanken), "Hanken Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-body: var(--font-hanken), "Hanken Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-outlier: var(--font-plex), "IBM Plex Mono", ui-monospace, monospace;
+  --radius-card: 8px; --radius-pill: 6px; --radius-tag: 4px; --rule-hair: 1px; --rule-bar: 2px; --shadow-card: none;
+  --tracking-display: -0.02em; --display-weight: 600;
+  /* Option colours: one hue per meaning, none of them the theme magenta (hue 350). */
+  --opt-red: oklch(46% 0.15 25);     --opt-red-bg: oklch(94% 0.035 25);     --opt-red-line: oklch(82% 0.07 25);
+  --opt-amber: oklch(46% 0.10 70);   --opt-amber-bg: oklch(94% 0.045 80);   --opt-amber-line: oklch(82% 0.08 75);
+  --opt-green: oklch(43% 0.11 150);  --opt-green-bg: oklch(94% 0.04 150);   --opt-green-line: oklch(82% 0.07 150);
+  --opt-teal: oklch(43% 0.08 195);   --opt-teal-bg: oklch(94% 0.03 195);    --opt-teal-line: oklch(82% 0.05 195);
+  --opt-blue: oklch(44% 0.13 255);   --opt-blue-bg: oklch(94% 0.03 255);    --opt-blue-line: oklch(82% 0.06 255);
+  --opt-indigo: oklch(42% 0.14 280); --opt-indigo-bg: oklch(94% 0.03 280);  --opt-indigo-line: oklch(82% 0.06 280);
+  --opt-violet: oklch(44% 0.14 305); --opt-violet-bg: oklch(94% 0.035 305); --opt-violet-line: oklch(82% 0.07 305);
+  --opt-slate: oklch(40% 0.02 245);  --opt-slate-bg: oklch(92% 0.008 245);  --opt-slate-line: oklch(80% 0.012 245);
+}
+
+/* Dark (the app's default, data-theme on <html>, ThemeToggle): re-derived per Hallmark
+   dark-mode.md, hue 245 / 350 held. Elevation is lightness: paper < paper-2 < sheet. */
+[data-theme="dark"] {
+  color-scheme: dark;
+  --color-paper: oklch(13% 0.015 265); --color-paper-2: oklch(16.5% 0.016 265); --color-paper-3: oklch(20.5% 0.016 265);
+  --color-sheet: oklch(18.5% 0.016 265);
+  --color-ink: oklch(96% 0.008 260); --color-ink-2: oklch(87% 0.012 260); --color-muted: oklch(72% 0.016 260);
+  --color-rule: oklch(27% 0.016 265); --color-rule-2: oklch(60% 0.018 260);
+  --color-accent: oklch(70% 0.210 345); --color-accent-2: oklch(75% 0.190 345); --color-accent-ink: oklch(15% 0.020 265); --color-focus: oklch(76% 0.190 345);
+  --color-error: oklch(72% 0.150 27); --color-success: oklch(74% 0.120 150);
+  --opt-red: oklch(80% 0.10 25);     --opt-red-bg: oklch(26% 0.045 25);     --opt-red-line: oklch(38% 0.07 25);
+  --opt-amber: oklch(84% 0.10 80);   --opt-amber-bg: oklch(26% 0.04 75);    --opt-amber-line: oklch(40% 0.06 75);
+  --opt-green: oklch(82% 0.10 150);  --opt-green-bg: oklch(25% 0.04 150);   --opt-green-line: oklch(38% 0.06 150);
+  --opt-teal: oklch(82% 0.08 195);   --opt-teal-bg: oklch(25% 0.03 195);    --opt-teal-line: oklch(38% 0.05 195);
+  --opt-blue: oklch(81% 0.09 255);   --opt-blue-bg: oklch(26% 0.045 255);   --opt-blue-line: oklch(40% 0.07 255);
+  --opt-indigo: oklch(80% 0.09 280); --opt-indigo-bg: oklch(26% 0.05 280);  --opt-indigo-line: oklch(40% 0.08 280);
+  --opt-violet: oklch(81% 0.10 305); --opt-violet-bg: oklch(26% 0.05 305);  --opt-violet-line: oklch(40% 0.08 305);
+  --opt-slate: oklch(80% 0.015 245); --opt-slate-bg: oklch(25% 0.012 245);  --opt-slate-line: oklch(36% 0.014 245);
+}

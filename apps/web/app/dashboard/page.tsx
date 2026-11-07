@@ -1,11 +1,12 @@
 // Triage inbox (PRD §10.1, Q67): queues + filters | ranked list | dossier.
 import Link from "next/link";
-import { ArrowLeft, ArrowSquareOut, ChartBar, Files, Fire, Flask, GlobeSimpleX, Hourglass, Info, Lightning, Percent, Repeat, Robot, Warning, X } from "@phosphor-icons/react/ssr";
+import { ArrowLeft, ArrowSquareOut, ChartBar, Files, Fire, Flask, GlobeSimpleX, Info, Robot, Warning, X } from "@phosphor-icons/react/ssr";
 import { type ScoreBreakdown, type SourceFamily, type StructuredIntelligence, boardColumn, sourceFamily } from "@bs/core";
 import { ActionBar } from "@/components/ActionBar.tsx";
 import { FamilyIcon } from "@/components/FamilyIcon.tsx";
 import { PostLink } from "@/components/PostLink.tsx";
 import { FilterSelect } from "@/components/Filters.tsx";
+import { Facts, Meta } from "@/components/Meta.tsx";
 import { RowLink } from "@/components/RowLink.tsx";
 import { ThemeToggle } from "@/components/ThemeToggle.tsx";
 import { WebsiteAudit } from "@/components/WebsiteAudit.tsx";
@@ -94,7 +95,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
           <p className="sample-note">
             <Flask size={14} aria-hidden />
             <span>
-              <strong>Sample data.</strong> Sprint 0 posts older than 21 days — for testing, not real leads.
+              <strong>Sample data.</strong> Sprint 0 posts older than 21 days, for testing, not real leads.
             </span>
           </p>
         )}
@@ -163,13 +164,6 @@ function emptyText(view: View, filtered: boolean): string {
 }
 
 function ListRow({ row, href, current }: { row: Row; href: string; current: boolean }) {
-  const meta = [
-    row.country?.toUpperCase(),
-    row.vertical ? VERTICAL_SHORT[row.vertical] : null,
-    row.size_tier && row.size_tier !== "unknown" ? SIZE_LABEL[row.size_tier] : null,
-    row.domain ? null : "No website",
-    row.hours ? `~${row.hours} h/wk` : null,
-  ].filter(Boolean);
   return (
     <RowLink href={href} current={current}>
       <span className="row-top">
@@ -179,11 +173,20 @@ function ListRow({ row, href, current }: { row: Row; href: string; current: bool
       {row.symptom && <span className="row-pain">{row.symptom}</span>}
       <span className="row-tags">
         <UrgencyTag tier={row.urgency} />
-        {row.product_layer && <span className="layer-tag">{PRODUCT_LABEL[row.product_layer]}</span>}
+        {row.product_layer && <span className={`layer-tag layer-${row.product_layer}`}>{PRODUCT_LABEL[row.product_layer]}</span>}
         <ScopeTag pct={row.automatable_pct} />
       </span>
       <span className="row-meta">
-        <span className="row-meta-text">{meta.join(" · ")}</span>
+        <Facts
+          className="row-meta-text"
+          items={[
+            ["country", row.country?.toUpperCase()],
+            ["vertical", row.vertical && VERTICAL_SHORT[row.vertical]],
+            ["size", row.size_tier && row.size_tier !== "unknown" && SIZE_LABEL[row.size_tier]],
+            ["nosite", !row.domain && "No website"],
+            ["hours", row.hours ? `~${row.hours} h/wk` : null],
+          ]}
+        />
         <span className="row-icons">
           {uniqueByLabel(row.families).map((f) => (
             <FamilyIcon key={f} family={f} size={14} />
@@ -194,23 +197,19 @@ function ListRow({ row, href, current }: { row: Row; href: string; current: bool
   );
 }
 
-// Urgency tier (§1.1): dot + words, so it never relies on colour alone.
+// Urgency tier (§1.1): always in words, so it never relies on colour alone.
 function UrgencyTag({ tier: t }: { tier: UrgencyTier | null }) {
   if (!t) return null;
-  return (
-    <span className={`urgency-tag urgency-${t}`}>
-      <span className="urgency-dot" aria-hidden /> {URGENCY_LABEL[t]}
-    </span>
-  );
+  return <span className={`urgency-tag urgency-${t}`}>{URGENCY_LABEL[t]}</span>;
 }
 
-// "Full automation · 75%" / "Partial automation · 50%"; nothing when no post was extracted.
+// "Full automation 75%" / "Partial automation 50%"; nothing when no post was extracted.
 function ScopeTag({ pct }: { pct: number | null }) {
   const scope = scopeOf(pct);
   if (!scope) return null;
   return (
     <span className={`scope-tag scope-${scope}`}>
-      {SCOPE_LABEL[scope]} · <span className="num">{pct}%</span>
+      {SCOPE_LABEL[scope]} <span className="num">{pct}%</span>
     </span>
   );
 }
@@ -252,13 +251,17 @@ function Dossier({ company: c, view, nextHref, selfHref }: { company: Company; v
                   <GlobeSimpleX size={14} aria-hidden /> No website
                 </span>
               )}
-              <p className="d-meta">
-                {countryLabel(c.country)} · {verticalLabel(c.vertical)} · {SIZE_LABEL[c.size_tier ?? "unknown"]}
-                {c.employee_band ? ` (${c.employee_band})` : ""}
-              </p>
+              <Facts
+                className="d-meta"
+                items={[
+                  ["country", countryLabel(c.country)],
+                  ["vertical", verticalLabel(c.vertical)],
+                  ["size", `${SIZE_LABEL[c.size_tier ?? "unknown"]}${c.employee_band ? ` (${c.employee_band})` : ""}`],
+                ]}
+              />
               <span className="row-tags">
                 <UrgencyTag tier={c.urgency} />
-                {c.product_layer && <span className="layer-tag">Pitch: {PRODUCT_LABEL[c.product_layer]}</span>}
+                {c.product_layer && <span className={`layer-tag layer-${c.product_layer}`}>Pitch: {PRODUCT_LABEL[c.product_layer]}</span>}
               </span>
             </div>
             <div className={`d-score tier-${tier(c.priority_score)}`}>
@@ -269,7 +272,7 @@ function Dossier({ company: c, view, nextHref, selfHref }: { company: Company; v
 
           <Notices company={c} />
 
-          <section className="card tone-red" aria-labelledby="pain">
+          <section className="card" aria-labelledby="pain">
             <h3 id="pain">
               <Fire size={15} aria-hidden /> The pain
             </h3>
@@ -277,37 +280,48 @@ function Dossier({ company: c, view, nextHref, selfHref }: { company: Company; v
               <>
                 <p className="symptom">{si.verified_symptom}</p>
                 <dl className="stats">
-                  <Stat tone="blue" icon={<Repeat size={16} aria-hidden />} label="Happens" value={si.blast_radius.frequency} />
+                  <Stat label="Happens" value={si.blast_radius.frequency} />
+                  <Stat label="Impact" value={si.blast_radius.urgency_level} className={`impact-${si.blast_radius.urgency_level.toLowerCase()}`} />
                   <Stat
-                    tone={si.blast_radius.urgency_level === "Blocking" ? "red" : "amber"}
-                    icon={<Lightning size={16} aria-hidden />}
-                    label="Impact"
-                    value={si.blast_radius.urgency_level}
+                    label="Time lost"
+                    value={
+                      <>
+                        <span className="num">~{si.blast_radius.estimated_hours_wasted_weekly}</span> h/week
+                      </>
+                    }
                   />
-                  <Stat tone="violet" icon={<Hourglass size={16} aria-hidden />} label="Time lost" value={`~${si.blast_radius.estimated_hours_wasted_weekly} h/week`} />
                   <Stat
-                    tone="green"
-                    icon={<Percent size={16} aria-hidden />}
                     label={scopeOf(si.automatable_task_percentage) === "full" ? "Full automation" : "Automatable"}
-                    value={si.automatable_task_percentage === null ? "—" : `${si.automatable_task_percentage}% of duties`}
+                    value={
+                      si.automatable_task_percentage === null ? (
+                        "Not stated"
+                      ) : (
+                        <>
+                          <span className="num">{si.automatable_task_percentage}%</span> of duties
+                        </>
+                      )
+                    }
                   />
                 </dl>
-                <p className="d-sub">
-                  {si.department}
-                  {si.inferred_tech_stack.length > 0 && <> · Uses {si.inferred_tech_stack.join(", ")}</>}
-                  {si.blast_radius.founder_dependency_flag && <> · Owner is the bottleneck</>}
-                </p>
+                <Meta
+                  className="d-sub"
+                  items={[
+                    si.department,
+                    si.inferred_tech_stack.length > 0 && `Uses ${si.inferred_tech_stack.join(", ")}`,
+                    si.blast_radius.founder_dependency_flag && "Owner is the bottleneck",
+                  ]}
+                />
               </>
             ) : (
-              <p className="muted">No extracted pain on this company's signals yet.</p>
+              <p className="muted">No extracted pain on this company’s signals yet.</p>
             )}
           </section>
 
           {si?.proposed_ai_replacement && (
-            <section className="card tone-green pitch" aria-labelledby="pitch">
+            <section className="card pitch" aria-labelledby="pitch">
               <h3 id="pitch">
                 <Robot size={15} aria-hidden /> What to pitch
-                {si.product_layer && <span className="layer-tag">{PRODUCT_LABEL[si.product_layer]}</span>}
+                {si.product_layer && <span className={`layer-tag layer-${si.product_layer}`}>{PRODUCT_LABEL[si.product_layer]}</span>}
               </h3>
               <p>{si.proposed_ai_replacement}</p>
             </section>
@@ -315,7 +329,7 @@ function Dossier({ company: c, view, nextHref, selfHref }: { company: Company; v
 
           {b && best && <ScoreWhy breakdown={b} si={si} total={c.priority_score} source={SOURCE_LABEL[best.source_type]} />}
 
-          <section className="tone-blue" aria-labelledby="evidence">
+          <section className="section" aria-labelledby="evidence">
             <h3 id="evidence" className="section-title">
               <Files size={15} aria-hidden /> Evidence <span className="num">{c.challenges.length}</span>
             </h3>
@@ -326,29 +340,32 @@ function Dossier({ company: c, view, nextHref, selfHref }: { company: Company; v
                 const url = ch.source_url && /^https?:\/\//i.test(ch.source_url) ? ch.source_url : null;
                 const social = family === "linkedin_post" || family === "social_post";
                 return (
-                  <li key={ch.id} className={`card ev${social && url ? " ev-social" : ""}`}>
+                  <li key={ch.id} className={`ev${social && url ? " ev-social" : ""}`}>
                     {social && url && <PostLink url={url} sourceType={ch.source_type} id={`post-${ch.id}`} />}
                     <div className="ev-head">
                       <FamilyIcon family={family} labelled={false} />
                       <span className="ev-title">{title}</span>
                     </div>
-                    <p className="ev-meta">
-                      {SOURCE_LABEL[ch.source_type]}
-                      {ch.urgency_tier && <> · {URGENCY_LABEL[ch.urgency_tier]}</>}
-                      {ch.structured_intelligence?.stance === "implied" && (
-                        <span title="An upbeat or neutral post that shows manual work; the pain is inferred, so it scores lower"> · Implied</span>
-                      )}{" "}
-                      · {ageLabel(ch.posted_at)} · signal <span className="num">{ch.signal_score}</span>
-                      {url && !social && (
+                    <Meta
+                      className="ev-meta"
+                      items={[
+                        SOURCE_LABEL[ch.source_type],
+                        ch.urgency_tier && URGENCY_LABEL[ch.urgency_tier],
+                        ch.structured_intelligence?.stance === "implied" && (
+                          <span title="An upbeat or neutral post that shows manual work; the pain is inferred, so it scores lower">Implied</span>
+                        ),
+                        ageLabel(ch.posted_at),
                         <>
-                          {" · "}
+                          Signal <span className="num">{ch.signal_score}</span>
+                        </>,
+                        url && !social && (
                           <a href={url} target="_blank" rel="noopener noreferrer" className="link">
                             Open original <ArrowSquareOut size={12} aria-hidden />
                             <span className="sr-only">(opens in a new tab)</span>
                           </a>
-                        </>
-                      )}
-                    </p>
+                        ),
+                      ]}
+                    />
                     {ch.author_relation !== "employee" && rest.length > 0 && (
                       <details>
                         <summary>Read the post</summary>
@@ -373,16 +390,11 @@ function Dossier({ company: c, view, nextHref, selfHref }: { company: Company; v
   );
 }
 
-type Tone = "blue" | "red" | "amber" | "violet" | "green";
-
-function Stat({ label, value, icon, tone }: { label: string; value: string; icon?: React.ReactNode; tone: Tone }) {
+function Stat({ label, value, className }: { label: string; value: React.ReactNode; className?: string }) {
   return (
-    <div className={`stat tone-${tone}`}>
+    <div className="stat">
       <dt>{label}</dt>
-      <dd>
-        {icon}
-        {value}
-      </dd>
+      <dd className={className}>{value}</dd>
     </div>
   );
 }
@@ -396,7 +408,7 @@ function Notices({ company: c }: { company: Company }) {
       icon: <Warning size={14} aria-hidden />,
       text: (
         <>
-          <strong>Single signal.</strong> Nothing else confirms this pain yet — check the post before reaching out.
+          <strong>Single signal.</strong> Nothing else confirms this pain yet. Check the post before reaching out.
         </>
       ),
       warn: true,
@@ -420,7 +432,7 @@ function Notices({ company: c }: { company: Company }) {
       ),
       warn: true,
     });
-  if (c.is_sample) items.push({ icon: <Flask size={14} aria-hidden />, text: "Sample data — not a live lead." });
+  if (c.is_sample) items.push({ icon: <Flask size={14} aria-hidden />, text: "Sample data, not a live lead." });
   if (!items.length) return null;
   return (
     <ul className="notices">
@@ -438,7 +450,7 @@ function Notices({ company: c }: { company: Company }) {
 function ScoreWhy({ breakdown: b, si, total, source }: { breakdown: ScoreBreakdown; si: StructuredIntelligence | null; total: number; source: string }) {
   if (b.override === "inbound") {
     return (
-      <section className="card tone-violet" aria-labelledby="why">
+      <section className="card" aria-labelledby="why">
         <h3 id="why">
           <ChartBar size={15} aria-hidden /> Why {total}
         </h3>
@@ -452,11 +464,11 @@ function ScoreWhy({ breakdown: b, si, total, source }: { breakdown: ScoreBreakdo
         `${h.frequency} +${{ Daily: 10, Weekly: 5, Sporadic: 0 }[h.frequency]}`,
         `${h.urgency_level} +${h.urgency_level === "Blocking" ? 10 : 3}`,
         `owner bottleneck +${h.founder_dependency_flag ? 10 : 0}`,
-      ].join(" · ")
+      ].join(", ")
     : null;
   const base = total - b.B - b.M;
   return (
-    <section className="card tone-violet" aria-labelledby="why">
+    <section className="card" aria-labelledby="why">
       <h3 id="why">
         <ChartBar size={15} aria-hidden /> Why {total}
       </h3>
@@ -467,14 +479,14 @@ function ScoreWhy({ breakdown: b, si, total, source }: { breakdown: ScoreBreakdo
         </div>
         <div>
           <dt>
-            Pain severity{parts && <span className="muted"> — {parts}</span>}
+            Pain severity{parts && <span className="muted"> ({parts})</span>}
           </dt>
           <dd className="num">+{b.B}</dd>
         </div>
         <div>
           <dt>
             Confirmed by other sources{" "}
-            <span className="muted">— {b.families.length === 1 ? `only ${FAMILY_LABEL[b.families[0]!]}` : uniqueByLabel(b.families).map((f) => FAMILY_LABEL[f]).join(", ")}</span>
+            <span className="muted">({b.families.length === 1 ? `only ${FAMILY_LABEL[b.families[0]!]}` : uniqueByLabel(b.families).map((f) => FAMILY_LABEL[f]).join(", ")})</span>
           </dt>
           <dd className="num">+{b.M}</dd>
         </div>
