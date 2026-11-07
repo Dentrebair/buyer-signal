@@ -36,12 +36,15 @@ export function sourceFamily(type: SourceType): SourceFamily {
   return type === "dom_sniff" || type === "tech_stack" ? "website" : type;
 }
 
-export function weightsFor(type: SourceType, author?: AuthorRelation | null): Weights {
+// An implied post (Stance) states no problem: the pain is inferred, so buying intent is lower.
+export const IMPLIED_INTENT_PENALTY = 15;
+
+export function weightsFor(type: SourceType, author?: AuthorRelation | null, stance?: string | null): Weights {
   if (type === "linkedin_post" || type === "social_post") {
     if (!author) throw new Error(`${type} needs an author_relation`);
     const w = (type === "linkedin_post" ? LINKEDIN : REDDIT)[author];
     if (!w) throw new Error(`${type} does not accept author_relation=${author}`);
-    return w;
+    return stance === "implied" ? { E: w.E, I: w.I - IMPLIED_INTENT_PENALTY } : w;
   }
   return FIXED[type];
 }

@@ -51,6 +51,7 @@ export const FAMILY_LABEL: Record<SourceFamily, string> = {
 };
 
 export { FULL_AUTOMATION_PCT, SCOPES, SCOPE_LABEL, type Scope, scopeOf } from "@bs/core/scope";
+export { PRODUCT_LABEL, PRODUCT_LAYERS, URGENCY_LABEL, URGENCY_TIERS, type UrgencyTier } from "@bs/core/tier";
 
 export const verticalLabel = (slug: string | null) =>
   slug && slug in VERTICALS ? VERTICALS[slug as keyof typeof VERTICALS] : "Vertical unknown";

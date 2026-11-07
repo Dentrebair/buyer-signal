@@ -2,10 +2,10 @@
 // Usage: npm run worker
 import { PgBoss } from "pg-boss";
 import { z } from "zod";
-import { type QueueName, ApifyRunEvent, ExtractLlm, FetchDataset, Q, SniffDomain, StartBoardRun } from "@bs/core";
+import { type QueueName, ApifyRunEvent, ExtractLlm, ExtractSocial, FetchDataset, FetchSocial, Q, SniffDomain, StartBoardRun, StartSocialRun } from "@bs/core";
 import { BudgetExceededError, createPool, gatedLlm } from "@bs/db";
 import { ApifyClient, OpenRouterClient, ProviderError, RdapClient, fetchPage, loadFingerprints, sniffWebsite } from "@bs/integrations";
-import { type Deps, extractLlm, fetchDataset, ingestRotation, onApifyRunEvent, pollRuns, reconcileApify, resolveBatch, sniffDomain, sniffSeeds, startBoardRun } from "./jobs.ts";
+import { type Deps, extractLlm, extractSocial, fetchDataset, fetchSocial, ingestRotation, onApifyRunEvent, pollRuns, reconcileApify, resolveBatch, sniffDomain, sniffSeeds, startBoardRun, startSocialRun } from "./jobs.ts";
 
 const env = z
   .object({
@@ -66,6 +66,10 @@ const queues: QueueDef<any>[] = [
   { name: Q.apifyRunEvent, concurrency: 1, expireInSeconds: 120, schema: ApifyRunEvent, run: onApifyRunEvent },
   { name: Q.fetchDataset, concurrency: 1, expireInSeconds: 300, schema: FetchDataset, run: fetchDataset },
   { name: Q.extractLlm, concurrency: 2, expireInSeconds: 180, schema: ExtractLlm, run: extractLlm },
+  // Social digest, LinkedIn half (§4.1a): started by Run now; completion arrives through poll-runs.
+  { name: Q.startSocialRun, concurrency: 1, expireInSeconds: 120, schema: StartSocialRun, run: startSocialRun },
+  { name: Q.fetchSocial, concurrency: 1, expireInSeconds: 300, schema: FetchSocial, run: fetchSocial },
+  { name: Q.extractSocial, concurrency: 2, expireInSeconds: 180, schema: ExtractSocial, run: extractSocial },
   // One batch a day, so the day's best-scoring posts get the search quota (§5.1 step 5c).
   { name: Q.resolveBatch, concurrency: 1, expireInSeconds: 900, schema: z.unknown(), run: (d) => resolveBatch(d) },
   // Free (plain HTTP) and automatic (§4.2): pending seeds every 10 min, 4 sites at a time.

@@ -3,15 +3,33 @@
 import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type pg from "pg";
-import { type LlmClient, type StructuredIntelligence, Q, apifyCycleKey, auditSite, parseHtml } from "@bs/core";
+import { type LlmClient, type StructuredIntelligence, Q, SOCIAL_TOPICS, apifyCycleKey, auditSite, parseHtml } from "@bs/core";
 import { claimSeeds, createPool } from "@bs/db";
 import type { ApifyRun, SniffResult } from "@bs/integrations";
-import { type Deps, type Send, extractLlm, fetchDataset, ingestRotation, onApifyRunEvent, resolveBatch, sniffDomain, startBoardRun } from "../src/jobs.ts";
+import {
+  type Deps,
+  type Send,
+  extractLlm,
+  extractSocial,
+  fetchDataset,
+  fetchSocial,
+  ingestRotation,
+  onApifyRunEvent,
+  resolveBatch,
+  sniffDomain,
+  startBoardRun,
+  startSocialRun,
+} from "../src/jobs.ts";
 
 const items = JSON.parse(readFileSync(new URL("../../../packages/integrations/test/fixtures/indeed-items.json", import.meta.url), "utf8"));
 const NOW = new Date("2026-11-03T12:00:00Z");
 const CYCLE = new Date("2000-01-16T00:00:00Z"); // test-only cycle key, never a real one
 const ROTATION_DAY = new Date("2000-01-02T02:00:00Z"); // test-only rotation day
+// LinkedIn post URLs carry their time in the activity id (id >> 22 = Unix ms).
+const act = (d: Date) => (BigInt(d.getTime()) << 22n).toString();
+const SOCIAL_FRESH = `https://www.linkedin.com/posts/social-test-co_we-still-key-activity-${act(new Date(NOW.getTime() - 2 * 86_400_000))}-Ab1`;
+const SOCIAL_VENDOR = `https://www.linkedin.com/posts/vendor-x_automate-activity-${act(new Date(NOW.getTime() - 3 * 86_400_000))}-Ab2`;
+const SOCIAL_OLD = `https://www.linkedin.com/posts/old-co_spreadsheets-activity-${act(new Date(NOW.getTime() - 40 * 86_400_000))}-Ab3`;
 const RUN_ID = "testRunFixture01";
 const DOMAIN = "acme-freight.example";
 const R_DOMAIN = "resolve-test.example"; // resolve-path test company
@@ -29,6 +47,7 @@ const si: StructuredIntelligence = {
   proposed_ai_replacement: "Invoice capture into QuickBooks",
   blast_radius: { frequency: "Daily", urgency_level: "Blocking", founder_dependency_flag: false, estimated_hours_wasted_weekly: 20 },
   automation_fit: "high",
+  product_layer: "company_os",
   known_large_brand: false,
   author_relation: null,
   stance: null,
@@ -39,7 +58,8 @@ function fakes(
   over: { usageUsd?: number; capUsd?: number; searchCap?: number; resolveTo?: { domain: string | null; cited: string[]; confidence?: "high" | "low" }; pages?: Record<string, string>;
     ages?: Record<string, Date | null | "error">;
     sniffs?: Record<string, SniffResult>;
-    lagging?: boolean; rotation?: boolean; now?: Date } = {},
+    lagging?: boolean; rotation?: boolean; now?: Date;
+    socialPages?: object[]; social?: Record<string, unknown> } = {},
 ) {
   const sent: { queue: string; data: any; opts?: object }[] = [];
   const started: object[] = [];
@@ -56,7 +76,9 @@ function fakes(
     json: async (task, req) =>
       task === "resolve"
         ? { data: req.parse({ domain: over.resolveTo?.domain ?? null, confidence: over.resolveTo?.confidence ?? "high" }) as any, model: "fake/model", costUsd: 0, citations: over.resolveTo?.cited ?? [] }
-        : { data: req.parse(si) as any, model: "fake/model", costUsd: 0 },
+        : req.schemaName === "social_extraction"
+          ? { data: req.parse({ ...si, ...over.social }) as any, model: "fake/model", costUsd: 0 }
+          : { data: req.parse(si) as any, model: "fake/model", costUsd: 0 },
   };
   const send: Send = async (queue, data, opts) => void sent.push({ queue, data, ...(opts ? { opts } : {}) });
   const rdapCalls: string[] = [];
@@ -66,8 +88,8 @@ function fakes(
       usage: async () => ({ cycleStart: CYCLE, cycleEnd: CYCLE, usageUsd: over.usageUsd ?? 0, limitUsd: 5 }),
       startRun: async (_a, input) => (started.push(input), { ...run, status: "READY" }),
       getRun: async () => run,
-      datasetItems: async (_id, offset) => (offset === 0 ? items : []) as any,
-      datasetItemCount: async () => items.length,
+      datasetItems: async (_id, offset) => (offset === 0 ? (over.socialPages ?? items) : []) as any,
+      datasetItemCount: async () => (over.socialPages ?? items).length,
     },
     llm,
     fetchPage: async (url) => (over.pages?.[url] ? { url, status: 200, html: over.pages[url]!, headers: {} } : null),
@@ -116,6 +138,10 @@ async function cleanup(pool: pg.Pool) {
   await pool.query("delete from domain_cache where domain like 'sniff-test%.example'");
   await pool.query("delete from ingestion_runs where job_key = 'test-sniff-run'");
   await pool.query("delete from rotation_days where day = $1", [ROTATION_DAY.toISOString().slice(0, 10)]);
+  await pool.query("delete from companies where name_key like 'us:social test%'");
+  await pool.query("delete from resolve_queue where natural_id like 'post:linkedin:%' and payload::text like '%Social Test Co%'");
+  await pool.query("delete from seen_items where natural_id = any($1)", [[SOCIAL_FRESH, SOCIAL_VENDOR, SOCIAL_OLD].map((u) => `post:linkedin:${u.match(/activity-(\d{19})/)![1]}`)]);
+  await pool.query("delete from domain_cache where key like 'social test co%'");
 }
 
 // Remote database (~100 ms per round trip), so generous timeouts.
@@ -187,6 +213,77 @@ describe.skipIf(!process.env.DATABASE_URL)("worker pipeline (database)", { timeo
     expect(await onApifyRunEvent(deps, { apifyRunId: RUN_ID })).toBe("SUCCEEDED");
     const settled = Number((await pool.query("select total_usd from spend_counters where key = $1", [apifyCycleKey(CYCLE)])).rows[0].total_usd);
     expect(settled).toBeCloseTo(0.0012, 6); // 2 items from the dataset + start, not the start alone
+    await pool.query("delete from ingestion_runs where apify_run_id = $1", [RUN_ID]);
+    await pool.query("delete from spend_events where ref = $1", [RUN_ID]);
+  });
+
+  it("Social digest: LinkedIn search → fresh posts only → author check → card without the author's name (§4.1a)", async () => {
+    await pool.query("delete from ingestion_runs where apify_run_id = $1", [RUN_ID]);
+    const socialPages = [
+      {
+        organicResults: [
+          { url: SOCIAL_FRESH, title: "Jane Doe's Post", description: "At Social Test Co we still do all our invoice data entry by hand, every single day." },
+          { url: SOCIAL_VENDOR, title: "Vendor X", description: "Still doing data entry manually? Book a demo." },
+          { url: SOCIAL_OLD, title: "Old post", description: "Our data entry is manual." },
+          { url: "https://www.linkedin.com/in/jane-doe", title: "Jane Doe", description: "profile, not a post with data entry" },
+        ],
+      },
+    ];
+    const { deps, sent, started } = fakes(pool, { socialPages, social: { author_relation: "founder_owner", stance: "suffering", company_name: "Social Test Co", vertical: "logistics" } });
+    expect(await startSocialRun(deps, { vertical: "logistics", keyword: null, country: "us", pages: 1 }, "test-social-key")).toEqual({ started: RUN_ID });
+    expect(await startSocialRun(deps, { vertical: "logistics", keyword: null, country: "us", pages: 1 }, "test-social-key")).toEqual({ started: RUN_ID }); // retry: no second run
+    expect(started).toHaveLength(1);
+    expect(started[0]).toMatchObject({ quickDateRange: "d21", maxPagesPerQuery: 1, countryCode: "us" });
+    expect(String((started[0] as { queries: string }).queries)).toContain("site:linkedin.com/posts");
+    // Topic search: the vertical's topics in rotation (where it is depends on earlier runs).
+    expect(SOCIAL_TOPICS.logistics.some((t) => String((started[0] as { queries: string }).queries).includes(`"${t}"`))).toBe(true);
+    // Completion is checked 20 s after the start, not at the next 5-minute poll.
+    expect(sent.find((s) => s.queue === Q.apifyRunEvent)).toMatchObject({ data: { apifyRunId: RUN_ID, recheck: 30 }, opts: { startAfter: 20 } });
+
+    // Seconds after the run ends its dataset can still read empty: look again before settling.
+    const early = fakes(pool, { socialPages: [] });
+    expect(await onApifyRunEvent(early.deps, { apifyRunId: RUN_ID, recheck: 30 })).toBe("waiting for final counts");
+    expect(early.sent).toEqual([{ queue: Q.apifyRunEvent, data: { apifyRunId: RUN_ID, recheck: 3 }, opts: { startAfter: 10 } }]);
+    expect(await onApifyRunEvent(deps, { apifyRunId: RUN_ID })).toBe("SUCCEEDED");
+    const fetchJob = sent.find((s) => s.queue === Q.fetchSocial)!;
+    expect(fetchJob).toBeDefined();
+    const counts = await fetchSocial(deps, fetchJob.data);
+    // profile → not a post; 40-day-old post → stale; fresh + vendor pass the free gate.
+    expect(counts).toMatchObject({ raw_items_ingested: 4, dropped_stale_count: 1, dropped_trie_count: 1 });
+    const extracts = sent.filter((s) => s.queue === Q.extractSocial);
+    expect(extracts).toHaveLength(2);
+
+    // The vendor post: the LLM says vendor/selling → dropped.
+    const vendor = extracts.find((e) => e.data.url === SOCIAL_VENDOR)!;
+    const v = fakes(pool, { social: { author_relation: "vendor", stance: "selling", company_name: null, vertical: null } });
+    expect(await extractSocial(v.deps, vendor.data)).toMatch(/dropped/);
+
+    const fresh = extracts.find((e) => e.data.url === SOCIAL_FRESH)!;
+    expect(await extractSocial(deps, fresh.data)).toMatch(/^persisted/);
+    const ch = (
+      await pool.query(
+        `select ch.source_type, ch.author_relation, ch.evidence_snippet, ch.source_url, ch.evidence_confidence, ch.buying_intent, c.company_name
+           from challenges ch join companies c on c.id = ch.company_id where ch.source_url = $1`,
+        [SOCIAL_FRESH],
+      )
+    ).rows[0];
+    expect(ch).toMatchObject({ source_type: "linkedin_post", author_relation: "founder_owner", company_name: "Social Test Co", evidence_confidence: 85, buying_intent: 90 });
+    expect(ch.evidence_snippet).not.toContain("Jane Doe"); // the result title (author name) is never stored
+    // Only posts the AI read are kept (the lead, and the AI's drop for checking); free drops are
+    // only counted. Never the title (author name).
+    const listed = (await pool.query("select url, outcome, snippet from social_results where run_id = $1 order by url", [fetchJob.data.runId])).rows;
+    expect(Object.fromEntries(listed.map((r) => [r.url, r.outcome]))).toEqual({ [SOCIAL_FRESH]: "card", [SOCIAL_VENDOR]: "stance" });
+    expect(listed.some((r) => r.snippet.includes("Jane Doe's Post"))).toBe(false);
+
+    // An upbeat post that shows manual work (implied) becomes a card too, with lower buying intent.
+    const implied = { ...fresh.data, naturalId: "post:linkedin:implied-test", url: `${SOCIAL_FRESH}-implied` };
+    const im = fakes(pool, { social: { author_relation: "founder_owner", stance: "implied", company_name: "Social Test Co", vertical: null } });
+    expect(await extractSocial(im.deps, implied)).toMatch(/^persisted/);
+    const imCh = (await pool.query("select buying_intent, c.vertical from challenges ch join companies c on c.id = ch.company_id where ch.natural_id = $1", [implied.naturalId])).rows[0];
+    expect(imCh).toMatchObject({ buying_intent: 75, vertical: "logistics" });
+    await pool.query("delete from resolve_queue where natural_id = $1", [implied.naturalId]);
+    // Its website-search row would otherwise take the single search of the resolve test below.
+    await pool.query("delete from resolve_queue where natural_id = $1", [fresh.data.naturalId]);
     await pool.query("delete from ingestion_runs where apify_run_id = $1", [RUN_ID]);
     await pool.query("delete from spend_events where ref = $1", [RUN_ID]);
   });

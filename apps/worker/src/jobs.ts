@@ -4,12 +4,29 @@ import type pg from "pg";
 import {
   type ApifyRunEvent,
   type DomainAge,
-  type ExtractLlm,
   type FetchDataset,
   type LlmClient,
   type QueueName,
   type RawJobPost,
   type StartBoardRun,
+  type StartSocialRun,
+  type ExtractLlmInput,
+  ExtractLlm,
+  type FetchSocial,
+  type ExtractSocial,
+  type AuthorRelation,
+  socialQuery,
+  matchAtoms,
+  urgencyTier,
+  RECHECKS,
+  RECHECK_SECONDS,
+  SEARCH_ACTOR,
+  SEARCH_ACTOR_MIN_CAP,
+  SEARCH_PRICES,
+  buildSocialExtraction,
+  gateSnippet,
+  linkedinPost,
+  linkedinSearchInput,
   type StructuredIntelligence,
   MAX_SIGNAL_AGE_DAYS,
   Q,
@@ -39,6 +56,10 @@ import {
 } from "@bs/core";
 import {
   type DropCounter,
+  type SocialOutcome,
+  purgeSocialResults,
+  recordSocialResult,
+  setSocialOutcome,
   bumpCounters,
   claimRotationDay,
   rotationHistory,
@@ -170,6 +191,7 @@ export async function startBoardRun(
     throw e;
   }
   await recordApifyRun(d.pool, runId, apifyRunId);
+  await d.send(Q.apifyRunEvent, { apifyRunId, recheck: RECHECKS } satisfies ApifyRunEvent, { startAfter: RECHECK_SECONDS });
   d.log("apify run started", { apifyRunId, title: job.title, country: job.country, worst });
   return { started: apifyRunId };
 }
@@ -180,20 +202,36 @@ export async function onApifyRunEvent(d: Deps, job: ApifyRunEvent): Promise<stri
   if (!row) return "unknown run"; // not started by us — ignore
   if (row.status !== "running") return "already handled";
   const run = await d.apify.getRun(job.apifyRunId);
-  if (!TERMINAL.includes(run.status)) return `still ${run.status}`;
+  if (!TERMINAL.includes(run.status)) {
+    if ((job.recheck ?? 0) > 0) await d.send(Q.apifyRunEvent, { apifyRunId: job.apifyRunId, recheck: job.recheck! - 1 } satisfies ApifyRunEvent, { startAfter: RECHECK_SECONDS });
+    return `still ${run.status}`;
+  }
 
   const ok = run.status === "SUCCEEDED";
+  const social = row.job_type === "linkedin";
   const usage = await d.apify.usage();
   // Right after a run ends, chargedEventCounts can still show only the start event; the dataset's
-  // item count is final, so the cost is the larger of the two.
+  // item count is final (one item per board post, or per search results page), so the cost is
+  // the larger of the two.
   const items = ok ? await d.apify.datasetItemCount(run.defaultDatasetId) : 0;
-  const actual = Math.max(runCostUsd(run, INDEED_PRICES), ok ? items * PLAN.pricePerItem + PLAN.startPrice : 0);
+  // Both counts can still read zero seconds after the run ends (2026-11-06: settled at the start
+  // fee only). When the dataset looks empty, look again shortly — at most 3 times, so a genuinely
+  // empty run is not held up — before settling.
+  const recheck = job.recheck ?? 0;
+  if (ok && items === 0 && recheck > 0) {
+    await d.send(Q.apifyRunEvent, { apifyRunId: job.apifyRunId, recheck: Math.min(recheck - 1, 3) } satisfies ApifyRunEvent, { startAfter: RECHECK_SECONDS / 2 });
+    return "waiting for final counts";
+  }
+  const actual = social
+    ? Math.max(runCostUsd(run, SEARCH_PRICES), ok ? items * SEARCH_PRICES["search-page-scraped"] + SEARCH_PRICES["apify-actor-start"] : 0)
+    : Math.max(runCostUsd(run, INDEED_PRICES), ok ? items * PLAN.pricePerItem + PLAN.startPrice : 0);
   // Claim, settle and enqueue the fetch in one transaction: a crash leaves the run 'running'
   // for the next poll, never 'fetching' with no fetch job.
   const claimed = await withTransaction(d.pool, async (c) => {
     if (!(await claimRun(c, row.id, ok ? "fetching" : "failed"))) return false;
     await settleApifyRun(c, { cycleStart: usage.cycleStart, reservedUsd: Number(row.estimated_cost_usd), actualUsd: actual, runId: row.id, ref: run.id });
-    if (ok) await d.send(Q.fetchDataset, { runId: row.id, datasetId: run.defaultDatasetId, offset: 0 } satisfies FetchDataset, undefined, c);
+    if (ok && social) await d.send(Q.fetchSocial, { runId: row.id, datasetId: run.defaultDatasetId } satisfies FetchSocial, undefined, c);
+    else if (ok) await d.send(Q.fetchDataset, { runId: row.id, datasetId: run.defaultDatasetId, offset: 0 } satisfies FetchDataset, undefined, c);
     return true;
   });
   if (!claimed) return "already handled";
@@ -227,7 +265,7 @@ export async function fetchDataset(d: Deps, job: FetchDataset): Promise<Partial<
       if (!(await markSeen(c, post.naturalId))) return "dropped_dedup_count";
       if (!gate.pass) return gate.reason === "recruiter" ? "dropped_recruiter_count" : "dropped_trie_count";
       if (!post.company) return "dropped_unresolved_count"; // nothing to resolve a website from
-      const payload: ExtractLlm = {
+      const payload: ExtractLlmInput = {
         runId: job.runId,
         vertical: run.vertical as ExtractLlm["vertical"],
         post: { ...post, postedAt: post.postedAt?.toISOString() ?? null },
@@ -244,12 +282,170 @@ export async function fetchDataset(d: Deps, job: FetchDataset): Promise<Partial<
   return counts;
 }
 
+// ── Social digest: LinkedIn posts via Google search (§4.1a) ─────────────────
+// start-social-run mirrors start-board-run: reserve the worst case, record the run before
+// starting it, and never start twice for one job key. Completion arrives through poll-runs.
+export async function startSocialRun(d: Deps, job: StartSocialRun, jobKey: string): Promise<{ started: string } | { deferred: true } | { skipped: string }> {
+  const prior = await getRunByJobKey(d.pool, jobKey);
+  if (prior?.apify_run_id) return { started: prior.apify_run_id };
+  if (prior) {
+    await setRunStatus(d.pool, prior.id, "failed");
+    return { skipped: "unconfirmed earlier attempt" };
+  }
+  // Rotation within the vertical: each run takes the next topics (§4.1a).
+  const runIndex = Number(
+    (await d.pool.query<{ n: string }>("select count(*) n from ingestion_runs where job_type = 'linkedin' and vertical = $1", [job.vertical])).rows[0]!.n,
+  );
+  const q = socialQuery(job.vertical, { keyword: job.keyword, runIndex });
+  const plan = { maxItems: job.pages, pricePerItem: SEARCH_PRICES["search-page-scraped"], startPrice: SEARCH_PRICES["apify-actor-start"] };
+  const worst = worstCaseApifyCost(plan);
+  const usage = await d.apify.usage();
+  const release = () =>
+    d.pool.query("update spend_counters set total_usd = greatest(0, total_usd - $2) where key = $1", [apifyCycleKey(usage.cycleStart), worst]);
+  await seedApifyCycle(d.pool, usage.cycleStart, usage.usageUsd, d.settings.apifyCycleCapUsd);
+  if (!(await reserveApifyRun(d.pool, usage.cycleStart, worst, d.settings.apifyCycleCapUsd))) {
+    await d.send(Q.startSocialRun, job, { startAfter: DEFER_SECONDS });
+    return { deferred: true };
+  }
+  const runId = await createRun(d.pool, { jobKey, jobType: "linkedin", vertical: job.vertical, country: job.country, estimatedCostUsd: worst, queryTitle: q.label });
+  if (!runId) {
+    await release();
+    return { skipped: "concurrent attempt" };
+  }
+  let apifyRunId: string;
+  try {
+    apifyRunId = (
+      await d.apify.startRun(SEARCH_ACTOR, linkedinSearchInput({ query: q.query, country: job.country, pages: job.pages }), {
+        maxItems: job.pages,
+        maxTotalChargeUsd: apifyChargeCap(plan, SEARCH_ACTOR_MIN_CAP),
+      })
+    ).id;
+  } catch (e) {
+    await d.pool.query("delete from ingestion_runs where id = $1", [runId]);
+    await release();
+    throw e;
+  }
+  await recordApifyRun(d.pool, runId, apifyRunId);
+  await d.send(Q.apifyRunEvent, { apifyRunId, recheck: RECHECKS } satisfies ApifyRunEvent, { startAfter: RECHECK_SECONDS });
+  d.log("social run started", { apifyRunId, vertical: job.vertical, topics: q.label, country: job.country, worst });
+  return { started: apifyRunId };
+}
+
+interface SearchPage {
+  organicResults?: { url?: string; title?: string; description?: string }[];
+}
+
+// One dataset item per results page. Each LinkedIn result: freshness from its activity id,
+// dedup, then recruiter wording; survivors go to extract-social. Free drops are only counted
+// (seen_items already stops a repeat); a post the AI reads gets a social_results row, kept for a
+// lead and, for 7 days, for an AI drop so the operator can check its judgement. The work-keyword half of the snippet gate does not
+// apply: the query already names the topic, and implied posts rarely use job-ad wording (the
+// first topic run, 2026-11-06, lost 8 of 10 results there). The AI judges the meaning instead.
+export async function fetchSocial(d: Deps, job: FetchSocial): Promise<Partial<Record<DropCounter, number>>> {
+  const run = (await d.pool.query<{ country: "in" | "ae" | "us"; vertical: VerticalSlug | null }>("select country, vertical from ingestion_runs where id = $1", [job.runId]))
+    .rows[0];
+  if (!run) throw new Error(`ingestion run ${job.runId} not found`);
+  const pages = await d.apify.datasetItems<SearchPage>(job.datasetId, 0, 10);
+  const results = pages.flatMap((p) => p.organicResults ?? []);
+  const counts: Partial<Record<DropCounter, number>> = { raw_items_ingested: results.length };
+  const inc = (k: DropCounter) => (counts[k] = (counts[k] ?? 0) + 1);
+  for (const r of results) {
+    const li = r.url ? linkedinPost(r.url) : null;
+    const snippet = (r.description ?? "").trim();
+    const base = { runId: job.runId, url: r.url ?? "", snippet, postedAt: li?.postedAt ?? null };
+    if (!li) {
+      inc("dropped_trie_count"); // not a LinkedIn post (a profile, an article, another site)
+      continue;
+    }
+    if (!checkFreshness(li.postedAt, d.now(), true).fresh) {
+      inc("dropped_stale_count");
+      continue;
+    }
+    const text = `${r.title ?? ""}\n${snippet}`.slice(0, 2000);
+    const gate = gateSnippet(text, run.vertical);
+    const naturalId = `post:linkedin:${li.id}`;
+    const outcome = await withTransaction(d.pool, async (c): Promise<DropCounter | "sent"> => {
+      if (!(await markSeen(c, naturalId))) return "dropped_dedup_count";
+      if (!gate.pass && gate.reason === "recruiter") return "dropped_recruiter_count";
+      await recordSocialResult(c, { ...base, outcome: "checking" });
+      const payload: ExtractSocial = {
+        runId: job.runId,
+        country: run.country,
+        vertical: run.vertical,
+        naturalId,
+        url: r.url!,
+        text,
+        snippet: snippet.slice(0, 2000),
+        postedAt: li.postedAt.toISOString(),
+        founderDependency: gate.pass && gate.founderDependency,
+      };
+      await d.send(Q.extractSocial, payload, undefined, c);
+      return "sent";
+    });
+    if (outcome !== "sent") inc(outcome);
+  }
+  await bumpCounters(d.pool, job.runId, counts);
+  await setRunStatus(d.pool, job.runId, "done");
+  return counts;
+}
+
+// Author check (Q59): only the business's own people showing their own manual work — as a
+// complaint (suffering) or in an upbeat post (implied) — with the company named. Then the same
+// path as a job post.
+const OWN_AUTHORS = new Set(["founder_owner", "employee", "company_page"]);
+const KEPT_STANCES = new Set(["suffering", "implied"]);
+
+export async function extractSocial(d: Deps, job: ExtractSocial): Promise<string> {
+  const out = await d.llm.json("extraction", buildSocialExtraction({ url: job.url, text: job.text }));
+  const si = out.data;
+  const verdict = (outcome: SocialOutcome) =>
+    setSocialOutcome(d.pool, { runId: job.runId, url: job.url, outcome, authorRelation: si.author_relation, stance: si.stance, symptom: si.verified_symptom });
+  if (!si.author_relation || !OWN_AUTHORS.has(si.author_relation) || !si.stance || !KEPT_STANCES.has(si.stance)) {
+    await verdict("stance");
+    return drop(d, job.runId, "dropped_stance_count");
+  }
+  if (!si.company_name?.trim()) {
+    await verdict("no_company");
+    return drop(d, job.runId, "dropped_unresolved_count");
+  }
+  const { company_name, vertical, ...rest } = si;
+  const asPost: ExtractLlm = {
+    runId: job.runId,
+    vertical: vertical ?? job.vertical,
+    founderDependency: job.founderDependency,
+    source: "linkedin_post",
+    author: si.author_relation as AuthorRelation,
+    post: {
+      naturalId: job.naturalId,
+      url: job.url,
+      title: "LinkedIn post", // the result title is the author's name: never stored
+      company: company_name.trim(),
+      description: job.snippet,
+      postedAt: job.postedAt,
+      city: null,
+      country: job.country,
+      boardWebsite: null,
+      boardEmployeeBand: null,
+    },
+  };
+  const result = await toCard(d, asPost, rest, out.model);
+  await verdict(result === "dropped_no_fit_count" ? "no_fit" : result === "dropped_size_count" ? "too_large" : "card");
+  return result;
+}
+
 // ── extract-llm → resolve → size → upsert + score ───────────────────────────
-export async function extractLlm(d: Deps, job: ExtractLlm): Promise<string> {
+export async function extractLlm(d: Deps, input: ExtractLlmInput): Promise<string> {
+  const job = ExtractLlm.parse(input); // fills source/author for job posts
   const post = toPost(job);
   const out = await d.llm.json("extraction", buildJobExtraction({ title: post.title, company: post.company, location: post.city, description: post.description }));
   const si = out.data;
 
+  return toCard(d, job, si, out.model);
+}
+
+// Shared by job posts and LinkedIn posts once extracted: fit → size → resolve → card.
+async function toCard(d: Deps, job: ExtractLlm, si: StructuredIntelligence, model: string): Promise<string> {
+  const post = toPost(job);
   if (si.automation_fit === "none") return drop(d, job.runId, "dropped_no_fit_count");
   const size = classifySize({ employeeBand: post.boardEmployeeBand, bandSource: "job_board", knownLargeBrand: si.known_large_brand, now: d.now() });
   if (!size.keep) return drop(d, job.runId, "dropped_size_count");
@@ -260,7 +456,7 @@ export async function extractLlm(d: Deps, job: ExtractLlm): Promise<string> {
   const boardDomain = bareDomain(post.boardWebsite);
   if (boardDomain) await cacheDomain(d.pool, cacheKey, boardDomain);
   const domain = boardDomain ?? (await cachedDomain(d.pool, cacheKey));
-  const payload: ResolvePayload = { job, si, model: out.model };
+  const payload: ResolvePayload = { job, si, model };
   if (domain === undefined) {
     await enqueueResolve(d.pool, {
       naturalId: post.naturalId,
@@ -269,7 +465,7 @@ export async function extractLlm(d: Deps, job: ExtractLlm): Promise<string> {
       company: post.company!,
       city: post.city,
       country: post.country,
-      score: provisionalScore(si, job.founderDependency),
+      score: provisionalScore(job, si),
       postedAt: post.postedAt,
       payload,
     });
@@ -282,8 +478,8 @@ function toPost(job: ExtractLlm): RawJobPost {
   return { ...job.post, postedAt: job.post.postedAt ? new Date(job.post.postedAt) : null };
 }
 
-function provisionalScore(si: StructuredIntelligence, founderDependency: boolean): number {
-  return signalScore("job_post", weightsFor("job_post"), blastRadius(si.blast_radius, founderDependency));
+function provisionalScore(job: ExtractLlm, si: StructuredIntelligence): number {
+  return signalScore(job.source, weightsFor(job.source, job.author, si.stance), blastRadius(si.blast_radius, job.founderDependency));
 }
 
 // Upsert company + challenge + score + seed in one transaction (§5.1 steps 7–8). Safe to run
@@ -300,8 +496,17 @@ async function persistCard(d: Deps, x: ResolvePayload, domain: string | null): P
   const registeredAt = domain && size.tier === "unknown" ? await domainAge(d, domain) : null;
   if (registeredAt) size = sizeOf(registeredAt);
   if (!size.keep) throw new Error("persistCard: domain age never drops a company");
-  const w = weightsFor("job_post");
+  const w = weightsFor(job.source, job.author, si.stance);
   const B = blastRadius(si.blast_radius, job.founderDependency);
+  // LinkedIn: the snippet only (§4.1a); its title is the author's name, so it is never stored.
+  const evidence = job.source === "linkedin_post" ? post.description : `${post.title}\n\n${post.description}`;
+  const tier = urgencyTier({
+    sourceType: job.source,
+    authorRelation: job.author,
+    title: job.source === "job_post" ? post.title : null,
+    text: evidence,
+    matches: matchAtoms(evidence, job.vertical),
+  });
   await withTransaction(d.pool, async (c) => {
     const companyId = await upsertCompany(c, {
       domain,
@@ -316,22 +521,24 @@ async function persistCard(d: Deps, x: ResolvePayload, domain: string | null): P
     });
     const inserted = await insertChallenge(c, {
       companyId,
-      sourceType: "job_post",
+      sourceType: job.source,
       naturalId: post.naturalId,
       sourceUrl: post.url,
       E: w.E,
       I: w.I,
       B,
-      signalScore: signalScore("job_post", w, B),
+      signalScore: signalScore(job.source, w, B),
       department: si.department,
       postedAt: post.postedAt,
-      evidenceSnippet: `${post.title}\n\n${post.description}`,
+      evidenceSnippet: evidence,
       structuredIntelligence: job.founderDependency ? { ...si, blast_radius: { ...si.blast_radius, founder_dependency_flag: true } } : si,
       llmModel: x.model,
+      authorRelation: job.author,
+      urgencyTier: tier,
     });
     // Always: a website attached later can fold another card's challenges into this company.
     await recomputeCompanyScore(c, companyId);
-    if (domain) await insertSeedUrl(c, domain, companyId, "job_post");
+    if (domain) await insertSeedUrl(c, domain, companyId, job.source);
     if (inserted) await bumpCounters(c, job.runId, domain ? { llm_persisted_count: 1 } : { llm_persisted_count: 1, persisted_no_website_count: 1 });
   });
 }
@@ -450,6 +657,7 @@ export async function sniffDomain(d: Deps, job: SniffDomain): Promise<string> {
         evidenceSnippet: sig.evidence,
         structuredIntelligence: null,
         llmModel: null,
+        urgencyTier: "low", // §1.1: website signals are passive structural debt
       });
     }
     await recomputeCompanyScore(c, companyId);
@@ -461,7 +669,8 @@ export async function sniffDomain(d: Deps, job: SniffDomain): Promise<string> {
 // ── poll-runs: webhook safety net, and the only path locally (Apify can't reach localhost) ──
 export async function pollRuns(d: Deps): Promise<number> {
   const runs = await unfinishedRuns(d.pool, 60);
-  for (const r of runs) await d.send(Q.apifyRunEvent, { apifyRunId: r.apify_run_id } satisfies ApifyRunEvent, { singletonKey: r.apify_run_id });
+  for (const r of runs) await d.send(Q.apifyRunEvent, { apifyRunId: r.apify_run_id, recheck: 0 } satisfies ApifyRunEvent, { singletonKey: r.apify_run_id });
+  await purgeSocialResults(d.pool);
   return runs.length;
 }
 

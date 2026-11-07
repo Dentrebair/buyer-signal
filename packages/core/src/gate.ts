@@ -24,6 +24,11 @@ export const SEED_ATOMS: AtomList = {
     "centralise company documentation", "knowledge base", "training material*",
   ],
   OWNER_DEPENDENCY: ["rely on the owner", "only the founder knows", "answering questions my team", "report directly to the owner"],
+  // §1.1 shadow IT: data bridged between systems by hand (2026-11-07; mining found none).
+  INTEGRATION_DEBT: [
+    "cross-referenc*", "cross referenc*", "between systems", "across systems", "multiple systems", "re-key*", "rekey*",
+    "re-enter*", "double entry", "duplicate data entry", "sync data between", "copy data between",
+  ],
   // Generic recruiter wording; mined recruiter phrases are often one agency's boilerplate.
   RECRUITER: [
     "on behalf of our client", "our client is seeking", "our client is looking", "hiring for our client", "for a leading client",
@@ -144,6 +149,15 @@ function shippedTrie(vertical: VerticalSlug | null | undefined): Trie {
 
 export function matchAtoms(text: string, vertical?: VerticalSlug | null, trie = shippedTrie(vertical)): GateMatch[] {
   return matchTrie(trie, text);
+}
+
+// LinkedIn snippets (§4.1a) are ~2 sentences, so one work atom is enough; recruiters still drop.
+export function gateSnippet(text: string, vertical?: VerticalSlug | null, trie = shippedTrie(vertical)): GateResult {
+  const matches = matchTrie(trie, text);
+  if (matches.some((m) => m.category === "RECRUITER")) return { pass: false, reason: "recruiter", matches };
+  if (!matches.some((m) => WORK.has(m.category))) return { pass: false, reason: "trie", matches };
+  const founderDependency = matches.some((m) => m.category === "INFORMATION_SILO" || m.category === "OWNER_DEPENDENCY");
+  return { pass: true, matches, founderDependency };
 }
 
 export type GateResult =

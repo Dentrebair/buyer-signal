@@ -2,7 +2,7 @@
 // Run now (§10.3): enqueue the same jobs the crons would. The worker's budget gates still apply,
 // so a click past the Apify cycle cap or the daily search quota is deferred, not run.
 import { revalidatePath } from "next/cache";
-import { Q, StartBoardRun } from "@bs/core";
+import { Q, StartBoardRun, StartSocialRun } from "@bs/core";
 import { asOperator } from "@/lib/operator.ts";
 import { queue } from "@/lib/queue.ts";
 
@@ -16,6 +16,15 @@ export async function runJobPosts(raw: unknown): Promise<RunResult> {
   await (await queue()).send(Q.startBoardRun, parsed.data);
   revalidatePath("/radar");
   return { ok: true, message: `Started: ${parsed.data.limit} × "${parsed.data.title}". New cards appear in the inbox in a few minutes.` };
+}
+
+export async function runSocial(raw: unknown): Promise<RunResult> {
+  const parsed = StartSocialRun.safeParse(raw);
+  if (!parsed.success) return { ok: false, message: "Check the vertical, market, keyword (letters and numbers only) and number of pages." };
+  await asOperator(async () => {});
+  await (await queue()).send(Q.startSocialRun, parsed.data);
+  revalidatePath("/radar");
+  return { ok: true, message: `Started: ${parsed.data.pages} page${parsed.data.pages > 1 ? "s" : ""} of search results. Results arrive within about 5 minutes.` };
 }
 
 export async function runSource(source: "sniff" | "search"): Promise<RunResult> {

@@ -12,6 +12,8 @@ import { WebsiteAudit } from "@/components/WebsiteAudit.tsx";
 import { type Company, type Row, type View, QUEUES, loadInbox, parseView, viewHref } from "@/lib/inbox.ts";
 import {
   FAMILY_LABEL,
+  PRODUCT_LABEL,
+  PRODUCT_LAYERS,
   QUEUE_LABEL,
   REJECT_LABEL,
   SCOPES,
@@ -19,6 +21,9 @@ import {
   SIZE_LABEL,
   SIZE_ORDER,
   SOURCE_LABEL,
+  URGENCY_LABEL,
+  URGENCY_TIERS,
+  type UrgencyTier,
   VERTICAL_SHORT,
   ageLabel,
   countryLabel,
@@ -35,7 +40,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
   const index = selected ? inbox.rows.findIndex((r) => r.id === selected.id) : -1;
   const next = index >= 0 ? (inbox.rows[index + 1] ?? inbox.rows[index - 1] ?? null) : null;
   const hasSample = inbox.rows.some((r) => r.is_sample) || selected?.is_sample;
-  const filtered = Boolean(view.vertical || view.country || view.size || view.scope);
+  const filtered = Boolean(view.vertical || view.country || view.size || view.scope || view.urgency || view.layer);
 
   return (
     <div className="app" data-view={view.id ? "detail" : "list"}>
@@ -75,9 +80,11 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
             label="Size"
             options={SIZE_ORDER.filter((s) => inbox.options.sizes.includes(s)).map((s) => ({ value: s, label: SIZE_LABEL[s] }))}
           />
+          <FilterSelect name="urgency" label="Urgency" options={URGENCY_TIERS.map((t) => ({ value: t, label: URGENCY_LABEL[t] }))} />
+          <FilterSelect name="layer" label="Pitch" options={PRODUCT_LAYERS.map((l) => ({ value: l, label: PRODUCT_LABEL[l] }))} />
           <FilterSelect name="scope" label="Automation" options={SCOPES.map((s) => ({ value: s, label: SCOPE_LABEL[s] }))} />
           {filtered && (
-            <Link href={viewHref(view, { vertical: null, country: null, size: null, scope: null, id: null })} className="clear-filters">
+            <Link href={viewHref(view, { vertical: null, country: null, size: null, scope: null, urgency: null, layer: null, id: null })} className="clear-filters">
               Clear filters
             </Link>
           )}
@@ -111,7 +118,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
           <div className="empty">
             <p>{emptyText(view, filtered)}</p>
             {filtered && (
-              <Link href={viewHref(view, { vertical: null, country: null, size: null, scope: null, id: null })} className="btn">
+              <Link href={viewHref(view, { vertical: null, country: null, size: null, scope: null, urgency: null, layer: null, id: null })} className="btn">
                 Clear filters
               </Link>
             )}
@@ -170,7 +177,11 @@ function ListRow({ row, href, current }: { row: Row; href: string; current: bool
         <span className={`score-pill num tier-${tier(row.priority_score)}`}>{row.priority_score}</span>
       </span>
       {row.symptom && <span className="row-pain">{row.symptom}</span>}
-      <ScopeTag pct={row.automatable_pct} />
+      <span className="row-tags">
+        <UrgencyTag tier={row.urgency} />
+        {row.product_layer && <span className="layer-tag">{PRODUCT_LABEL[row.product_layer]}</span>}
+        <ScopeTag pct={row.automatable_pct} />
+      </span>
       <span className="row-meta">
         <span className="row-meta-text">{meta.join(" · ")}</span>
         <span className="row-icons">
@@ -180,6 +191,16 @@ function ListRow({ row, href, current }: { row: Row; href: string; current: bool
         </span>
       </span>
     </RowLink>
+  );
+}
+
+// Urgency tier (§1.1): dot + words, so it never relies on colour alone.
+function UrgencyTag({ tier: t }: { tier: UrgencyTier | null }) {
+  if (!t) return null;
+  return (
+    <span className={`urgency-tag urgency-${t}`}>
+      <span className="urgency-dot" aria-hidden /> {URGENCY_LABEL[t]}
+    </span>
   );
 }
 
@@ -235,6 +256,10 @@ function Dossier({ company: c, view, nextHref, selfHref }: { company: Company; v
                 {countryLabel(c.country)} · {verticalLabel(c.vertical)} · {SIZE_LABEL[c.size_tier ?? "unknown"]}
                 {c.employee_band ? ` (${c.employee_band})` : ""}
               </p>
+              <span className="row-tags">
+                <UrgencyTag tier={c.urgency} />
+                {c.product_layer && <span className="layer-tag">Pitch: {PRODUCT_LABEL[c.product_layer]}</span>}
+              </span>
             </div>
             <div className={`d-score tier-${tier(c.priority_score)}`}>
               <span className="d-score-num num">{c.priority_score}</span>
@@ -256,7 +281,7 @@ function Dossier({ company: c, view, nextHref, selfHref }: { company: Company; v
                   <Stat
                     tone={si.blast_radius.urgency_level === "Blocking" ? "red" : "amber"}
                     icon={<Lightning size={16} aria-hidden />}
-                    label="Urgency"
+                    label="Impact"
                     value={si.blast_radius.urgency_level}
                   />
                   <Stat tone="violet" icon={<Hourglass size={16} aria-hidden />} label="Time lost" value={`~${si.blast_radius.estimated_hours_wasted_weekly} h/week`} />
@@ -282,6 +307,7 @@ function Dossier({ company: c, view, nextHref, selfHref }: { company: Company; v
             <section className="card tone-green pitch" aria-labelledby="pitch">
               <h3 id="pitch">
                 <Robot size={15} aria-hidden /> What to pitch
+                {si.product_layer && <span className="layer-tag">{PRODUCT_LABEL[si.product_layer]}</span>}
               </h3>
               <p>{si.proposed_ai_replacement}</p>
             </section>
@@ -307,7 +333,12 @@ function Dossier({ company: c, view, nextHref, selfHref }: { company: Company; v
                       <span className="ev-title">{title}</span>
                     </div>
                     <p className="ev-meta">
-                      {SOURCE_LABEL[ch.source_type]} · {ageLabel(ch.posted_at)} · signal <span className="num">{ch.signal_score}</span>
+                      {SOURCE_LABEL[ch.source_type]}
+                      {ch.urgency_tier && <> · {URGENCY_LABEL[ch.urgency_tier]}</>}
+                      {ch.structured_intelligence?.stance === "implied" && (
+                        <span title="An upbeat or neutral post that shows manual work; the pain is inferred, so it scores lower"> · Implied</span>
+                      )}{" "}
+                      · {ageLabel(ch.posted_at)} · signal <span className="num">{ch.signal_score}</span>
                       {url && !social && (
                         <>
                           {" · "}

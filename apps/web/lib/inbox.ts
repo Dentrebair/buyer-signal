@@ -1,7 +1,7 @@
 // Inbox queries (PRD §10.1). Queues and filters come from the URL so a view can be bookmarked.
 import type { ScoreBreakdown, SizeTier, SourceFamily, SourceType, StructuredIntelligence } from "@bs/core";
 import type { AuditCompany } from "@/components/WebsiteAudit.tsx";
-import { FULL_AUTOMATION_PCT, SCOPES, type Scope } from "./labels.ts";
+import { FULL_AUTOMATION_PCT, PRODUCT_LAYERS, SCOPES, type Scope, URGENCY_TIERS, type UrgencyTier } from "./labels.ts";
 import { asOperator } from "./operator.ts";
 
 export const QUEUES = ["triage", "nurture", "sent", "rejected"] as const;
@@ -14,6 +14,8 @@ export interface View {
   country: string | null;
   size: SizeTier | null;
   scope: Scope | null;
+  urgency: UrgencyTier | null;
+  layer: (typeof PRODUCT_LAYERS)[number] | null;
   id: string | null;
 }
 
@@ -28,6 +30,8 @@ export function parseView(sp: Record<string, string | string[] | undefined>): Vi
     country: one(sp.country),
     size: one(sp.size) as SizeTier | null,
     scope: SCOPES.find((s) => s === one(sp.scope)) ?? null,
+    urgency: URGENCY_TIERS.find((t) => t === one(sp.urgency)) ?? null,
+    layer: PRODUCT_LAYERS.find((l) => l === one(sp.layer)) ?? null,
     id: one(sp.id),
   };
 }
@@ -41,12 +45,21 @@ export function viewHref(v: View, patch: Partial<View> = {}): string {
   if (x.country) p.set("country", x.country);
   if (x.size) p.set("size", x.size);
   if (x.scope) p.set("scope", x.scope);
+  if (x.urgency) p.set("urgency", x.urgency);
+  if (x.layer) p.set("layer", x.layer);
   if (x.id) p.set("id", x.id);
   return `/dashboard?${p}`;
 }
 
 // The company's largest automatable share across its extracted signals (job posts).
 const PCT_SQL = "(select max((ch.structured_intelligence ->> 'automatable_task_percentage')::int) from challenges ch where ch.company_id = c.id)";
+
+// The company's most urgent signal tier (§1.1), and the product to pitch from its strongest
+// signal that names one.
+const URGENCY_SQL = `(select (array['high','medium','low'])[min(array_position(array['high','medium','low'], ch.urgency_tier))]
+   from challenges ch where ch.company_id = c.id)`;
+const LAYER_SQL = `(select ch.structured_intelligence ->> 'product_layer' from challenges ch
+   where ch.company_id = c.id and ch.structured_intelligence ->> 'product_layer' is not null order by ch.signal_score desc limit 1)`;
 
 // §10.1: Triage > 70, Nurture 50–70, hidden < 50 (never listed here).
 const QUEUE_SQL: Record<Queue, string> = {
@@ -70,6 +83,8 @@ export interface Row {
   symptom: string | null; // best signal's verified_symptom
   hours: number | null; // best signal's estimated hours wasted per week
   automatable_pct: number | null; // largest automatable share across its signals
+  urgency: UrgencyTier | null; // most urgent signal tier
+  product_layer: (typeof PRODUCT_LAYERS)[number] | null; // what to pitch first
 }
 
 export interface Challenge {
@@ -87,6 +102,7 @@ export interface Challenge {
   structured_intelligence: StructuredIntelligence | null;
   llm_model: string | null;
   author_relation: string | null;
+  urgency_tier: UrgencyTier | null;
 }
 
 export interface Company extends Row {
@@ -125,6 +141,8 @@ export function loadInbox(view: View): Promise<Inbox> {
     if (view.country) add("c.country = ?", view.country);
     if (view.size) add("c.size_tier = ?", view.size);
     if (view.scope) add(`${PCT_SQL} ${view.scope === "full" ? ">=" : "<"} ?`, FULL_AUTOMATION_PCT);
+    if (view.urgency) add(`${URGENCY_SQL} = ?`, view.urgency);
+    if (view.layer) add(`${LAYER_SQL} = ?`, view.layer);
     const where = filters.length ? ` and ${filters.join(" and ")}` : "";
 
     const counts = Object.fromEntries(QUEUES.map((q) => [q, 0])) as Record<Queue, number>;
@@ -145,7 +163,9 @@ export function loadInbox(view: View): Promise<Inbox> {
                 (select max(coalesce(ch.posted_at, ch.created_at)) from challenges ch where ch.company_id = c.id) as newest,
                 best.si ->> 'verified_symptom' as symptom,
                 (best.si -> 'blast_radius' ->> 'estimated_hours_wasted_weekly')::int as hours,
-                ${PCT_SQL} as automatable_pct
+                ${PCT_SQL} as automatable_pct,
+                ${URGENCY_SQL} as urgency,
+                ${LAYER_SQL} as product_layer
            from companies c
            left join lateral (
              select ch.structured_intelligence as si from challenges ch
@@ -173,7 +193,8 @@ export function loadInbox(view: View): Promise<Inbox> {
     if (selectedId && /^[0-9a-f-]{36}$/.test(selectedId)) {
       const co = (
         await c.query(
-          `select c.*, coalesce((select array_agg(distinct ch.source_family) from challenges ch where ch.company_id = c.id), '{}') as families
+          `select c.*, coalesce((select array_agg(distinct ch.source_family) from challenges ch where ch.company_id = c.id), '{}') as families,
+                  ${URGENCY_SQL} as urgency, ${LAYER_SQL} as product_layer
              from companies c where c.id = $1`,
           [selectedId],
         )
@@ -182,7 +203,7 @@ export function loadInbox(view: View): Promise<Inbox> {
         const challenges = (
           await c.query<Challenge>(
             `select id, source_type, source_url, signal_score, evidence_confidence, buying_intent, blast_radius, department,
-                    posted_at, created_at, evidence_snippet, structured_intelligence, llm_model, author_relation
+                    posted_at, created_at, evidence_snippet, structured_intelligence, llm_model, author_relation, urgency_tier
                from challenges where company_id = $1 order by coalesce(posted_at, created_at) desc`,
             [selectedId],
           )

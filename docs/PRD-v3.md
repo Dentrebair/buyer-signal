@@ -31,6 +31,41 @@ operator three ready-to-copy cold emails.
 **Out of scope for the system:** sending email or WhatsApp. The operator copies drafts and sends
 them from their own tools.
 
+### 1.1 Product layers and urgency tiers (operator framework, 2026-11-07)
+
+The definition every signal, score and pitch is checked against.
+
+**Product layers — what we sell, in order of depth.** Every extracted card carries
+`product_layer`: the first layer the evidence needs (AI-chosen, prompt in `extraction.ts`).
+
+| Layer | What it is | Evidence that calls for it |
+|---|---|---|
+| **Knowledge Base** (memory) | SOPs, training manuals, policies, client histories and guides pulled from cabinets, drives, Notion and email into one searchable store | Missing, scattered or paper documents; "create SOPs", "centralise the drive" |
+| **Company Brain** (intelligence) | RAG over the Knowledge Base that answers staff and owner questions, finds clauses and supports decisions | The owner or key people answer the same questions; knowledge in someone's head |
+| **Company OS** (execution) | AI connected to the stack (CRM, ERP, Slack, billing) through APIs and webhooks, running workflows: update records, route tickets, sync invoices | Data re-keyed between tools, manual updates, reconciliations, routing, scheduling |
+
+**Urgency tiers — how hard the pain bites.** Every signal carries `urgency_tier`
+(`challenges.urgency_tier`, migration 0010), set by fixed rules (`packages/core/src/tier.ts`),
+never by the AI, so the same evidence always gets the same tier. A company shows its most urgent
+signal's tier; the inbox filters by it. The tier sits beside the score; it does not change it.
+
+| Tier | Meaning | Signals | Rule today |
+|---|---|---|---|
+| 🔴 **High** — system breaking, founder bottleneck | Daily pain blocking growth; burnout or churn | Founder social vents (14-hour days, can't delegate, the same questions); "fixer" hires (Chief of Staff, Director of Operations, process consultant; "bring order to chaos", "put out fires", "build our operating system"); employee reviews citing chaos or owner dependency | Job post with a fixer title or fixer wording; a founder/owner post with an owner-dependency atom or vent wording |
+| 🟡 **Medium** — active inefficiency, information silos | Paying people to bridge software gaps; siloed knowledge | "SOP builder" hires; shadow-IT complaints (cross-referencing email, Slack and spreadsheets); "how do I connect my CRM to billing" questions | An information-silo atom (SOP atoms only when the text says *create/maintain/document* them); an integration atom that describes moving data between systems (a tool's name alone does not count); an owner-dependency atom that names the owner |
+| 🟢 **Low** — passive structural debt | Pain normalised as "how we've always done it"; hard to pitch cold without a higher signal | Manual data-entry roles; static PDF forms on the website; job posts listing 5+ disconnected tools | Everything else; website signals (`dom_sniff`, `tech_stack`) are always Low |
+
+**Coverage (2026-11-07).**
+- Built: both layers above on every new card; tiers on every signal (68 stored signals backfilled
+  by `npm run tier:backfill`: 0 High, 1 Medium, 67 Low — the Indeed desk-role spine is the Low
+  tier); inbox tags and Urgency / Pitch filters.
+- Gaps, in build order:
+  1. "Solved" social posts — solved by hand or partly solved → lead; solved with software → low-priority lead tagged Company OS.
+  2. Fixer titles in the job-post rotation (today's titles are all Low-tier desk roles).
+  3. 5+ disconnected tools as a counted signal.
+  4. Employee reviews (Glassdoor's terms forbid scraping: needs a compliant source) and forum tool-stack questions (Reddit, Sprint 4).
+- Cards extracted before 2026-11-07 have no product layer; re-extracting them costs about $0.0005 each.
+
 ## 2. Summary of decisions
 
 | Area | Decision |
@@ -167,6 +202,35 @@ Slots: India 15, UAE 15, US 15 = 45. The market marks are a starting point; a sl
 near-zero pass rate after two cycles is switched off and shown on `/radar`.
 `companies.vertical` and `ingestion_runs.vertical` store the vertical's slug.
 
+### 4.1c Learning loop: what to search (agreed 2026-11-07, not built)
+
+Apify money is spent when a post is fetched, so the system learns **which searches to run**, not
+only which fetched posts to drop. It replaces the fixed yield thresholds of the rotation (§4.1b)
+once built. Decisions from the operator design session (Q1–Q17):
+
+| Piece | Decision |
+|---|---|
+| Low tier (§1.1) | Lower priority, not ignored: kept, with most budget on High/Medium searches |
+| What it learns from | Run results daily; the operator's verdicts are the final judge |
+| Where it learns | Search time first (saves Apify money); free keyword filter second; AI instructions only for a mistake that keeps repeating |
+| Automation | Searches adjust themselves (cheap, reversible, budget-capped). Keyword and AI-instruction changes are **proposed for operator approval**, because they can silently lower recall (§6.3) |
+| Proposals | Checked **after every run** (not weekly). Proposed only when the evidence is strong: e.g. a keyword in ≥ 5 operator rejects or AI drops and in 0 Sent cards. Each proposal shows its evidence ("in 6 rejects, 0 sent", examples). Listed on the Sources page under **"N changes to review"** (also a badge on the inbox's Sources link), with Approve / Reject |
+| Rejected proposal | Not proposed again until its evidence doubles (6 → 12 rejects). The operator's reason is stored and later proposals are checked against it. Approvals and rejections both feed the loop |
+| Algorithm | **Thompson-sampling bandit.** Arms: job posts = vertical × market × title; social = vertical × market × topic (4 topics per run; a card is credited to the topic its snippet names) |
+| Reward per run | Cards per dollar, minus cards rejected as `not_real_pain` or `wrong_company` (rejections for `too_small` / `already_client` do not count against the search). Older runs fade with a **30-day half-life** |
+| New searches | Titles/topics learned from cards marked Sent, plus weekly AI suggestions; each new arm gets one probe run from a **20 % exploration** share |
+| Budget | ≥ 50 % of runs on High/Medium-tier arms, the bandit choosing within each group. Daily rotation: **3 job-post searches (35 posts) + 1 social search (3 pages)**, ≈ $0.05–0.08/day, ≈ $2–2.50/month, inside the existing caps |
+| Retiring | Automatic after **5 runs with 0 cards**; shown as Retired with one-click Revive |
+| Learned score | After ≈ 100 verdicts (≥ 30 Sent): a logistic-regression model over card features (tier, source, automation %, size…) runs in shadow beside the hand formula (§7), then is proposed to the operator |
+| Visibility | A **Searches** table on the Sources page (runs, cards per $, Trying / Strong / Weak / Retired, Revive), beside the **changes to review** list |
+
+**Build order:**
+1. Fixer titles in the job-post searches, and "solved" social posts (§1.1 gaps 1–2), so High-tier arms exist.
+2. The bandit plus the Searches table.
+3. Switch the daily rotation on.
+4. Proposals after each run, with Approve / Reject.
+5. The learned score, once the verdict threshold is met.
+
 ### 4.1a Company posts (LinkedIn, Reddit)
 
 - **LinkedIn:** Apify Google Search queries `site:linkedin.com/posts` combined with
@@ -196,6 +260,30 @@ near-zero pass rate after two cycles is switched off and shown on `/radar`.
   only the post URL and the evidence sentences. Drafts never mention the employee, their
   post or "someone on your team" — they pitch the general problem. The card shows
   **"Employee post — don't quote"**.
+
+**Build notes (2026-11-06): LinkedIn built, Reddit deferred.** Shown in the UI as **Social
+digest**, with the platform only as each post's corner logo.
+- **Actors checked on the live API:** `apify/google-search-scraper` ($0.0045 per results page,
+  `quickDateRange`, Apify refuses run caps below $0.50) for LinkedIn. For Reddit,
+  `clearpath/reddit-search-scraper` ($0.001 per post + $0.001 per run, `postedAfter`) was best:
+  `fatihtahta/…` returned unrelated posts without a subreddit, and `automation-lab/…` has no
+  exact date filter.
+- **Yield sample:**
+  - LinkedIn: 30 results from 3 first-person queries with vendor words excluded → 2 posts
+    where someone describes manual work at their own named company. The rest were 15
+    commentators and 10 vendors. A plain "manually … invoices" query gave 10/10 vendors.
+  - Reddit: 5 relevant posts, 4 describing real manual work, 0 naming a company.
+  - Operator decision: LinkedIn only, small. Reddit moves to the Sprint 4 trends track.
+- **Stance `implied` (2026-11-06):** an upbeat or neutral post (hiring, growth, a thank-you) that shows manual or headcount-driven work at the author's own business is kept, like `suffering`, with buying intent −15 and an "Implied" tag on the card. `-hiring` is no longer excluded from searches.
+- **First topic run (2026-11-06, logistics US):** 10 results → 8 dropped by the work-keyword gate, 2 by the author check, 0 cards. The work-keyword half of the snippet gate is dropped for social posts (the query already names the topic; implied posts rarely use job-ad wording); recruiter wording still drops. Every result and its verdict is kept 21 days in `social_results` (migration 0008, snippet and URL only, never the title) and listed under its run on the Sources page. Runs are rechecked every 20 s after start, so results show in about a minute instead of at the 5-minute poll. Revised the same day: `social_results` keeps only posts the AI reads (migration 0009) — leads for 21 days, the AI's drops for 7 days in a collapsed "Check the AI's drops" list; free drops are only counted, and `seen_items` (post id only, 30 days) stops repeats. Topics raised to 20 per vertical (5 runs before a repeat), with no one-word topics that name other things, and newsletter words excluded. Apify's counts can read zero seconds after a run ends, so an empty-looking dataset is re-checked up to 3 times before the run is settled.
+- **Pipeline:** `start-social-run` (Run now: vertical × optional keyword × market × 1–3 pages; revised 2026-11-06 from 3 fixed phrase sets, which missed posts not worded that way — the query now names 4 work topics per vertical in rotation, `SOCIAL_TOPICS`, and the AI judges meaning) →
+  poll-runs → `fetch-social`. Freshness comes from the post's activity id (id >> 22 = Unix
+  ms), with no page fetch. Then dedup on `post:linkedin:<id>`, and the snippet gate (≥ 1 work
+  atom, no recruiter atom). → `extract-social`: author check (founder, employee or company
+  page, suffering) and the company name. After that it follows the job-post path: fit,
+  size, resolve, card, website check.
+- **Privacy:** the result title (the author's name) is sent to the LLM but never stored. The
+  evidence is the snippet only.
 
 ### 4.3 Freshness rule (21 days)
 
@@ -1048,7 +1136,7 @@ Shared Zod schemas (`StructuredIntelligence`, `ScoreBreakdown`, job payloads) ar
 contract between worker and UI.
 
 **Sprint 0 — verification.** ✅ Job-board measurement, Apify search test, freshness check
-(2026-11-03). Remaining: Reddit actor pick (§12 1a), Apify webhook payload, OpenRouter model
+(2026-11-03). Reddit actor checked 2026-11-06 (§4.1a build notes; Reddit deferred). Remaining: Apify webhook payload, OpenRouter model
 comparison (extraction + drafts), webappanalyzer licence, pg-boss on the Supabase session
 pooler, Next.js version. Brave comparison waits for a key.
 

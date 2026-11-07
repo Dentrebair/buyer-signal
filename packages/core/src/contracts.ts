@@ -1,6 +1,7 @@
 // Shared contracts between worker and UI (PRD §9, §11). Ported from v2.1 §9 minus
 // `outreach_draft`, plus the v3 extraction fields (Q56, Q59).
 import { z } from "zod";
+import { PRODUCT_LAYERS } from "./tier.ts";
 
 export const Department = z.enum([
   "Operations",
@@ -42,8 +43,13 @@ export const AuthorRelationOut = z.enum([
 export const AuthorRelation = z.enum(["founder_owner", "employee", "company_page"]);
 export type AuthorRelation = z.infer<typeof AuthorRelation>;
 
-export const Stance = z.enum(["suffering", "selling", "commenting"]);
+// implied (2026-11-06): an upbeat or neutral post — hiring, growth, a thank-you — that shows
+// manual, repetitive or headcount-driven work at the author's own business.
+export const Stance = z.enum(["suffering", "implied", "selling", "commenting"]);
 export const AutomationFit = z.enum(["none", "some", "high"]);
+// Which product to pitch first (PRD §1.1): null on cards extracted before 2026-11-07.
+export const ProductLayer = z.enum(PRODUCT_LAYERS);
+export type ProductLayer = z.infer<typeof ProductLayer>;
 
 export const BlastRadiusHypothesis = z.object({
   frequency: Frequency,
@@ -61,6 +67,7 @@ export const StructuredIntelligence = z.object({
   proposed_ai_replacement: z.string().max(200).nullable(),
   blast_radius: BlastRadiusHypothesis,
   automation_fit: AutomationFit,
+  product_layer: ProductLayer.nullable().default(null),
   known_large_brand: z.boolean(),
   author_relation: AuthorRelationOut.nullable(), // LinkedIn/Reddit only
   stance: Stance.nullable(), // LinkedIn/Reddit only

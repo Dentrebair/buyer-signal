@@ -43,8 +43,8 @@ export async function recordApifyRun(db: Db, id: string, apifyRunId: string): Pr
 }
 
 export async function getRunByApifyId(db: Db, apifyRunId: string) {
-  const r = await db.query<{ id: string; status: string; country: string | null; vertical: string | null; estimated_cost_usd: string }>(
-    "select id, status, country, vertical, estimated_cost_usd from ingestion_runs where apify_run_id = $1",
+  const r = await db.query<{ id: string; job_type: string; status: string; country: string | null; vertical: string | null; estimated_cost_usd: string }>(
+    "select id, job_type, status, country, vertical, estimated_cost_usd from ingestion_runs where apify_run_id = $1",
     [apifyRunId],
   );
   return r.rows[0] ?? null;

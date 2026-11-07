@@ -97,14 +97,15 @@ export interface ChallengeInsert {
   structuredIntelligence: StructuredIntelligence | null;
   llmModel: string | null;
   authorRelation?: AuthorRelation | null;
+  urgencyTier?: "high" | "medium" | "low" | null;
 }
 
 // Safe to run twice: natural_id is unique (§5.3a). Returns false when it already existed.
 export async function insertChallenge(c: pg.PoolClient, x: ChallengeInsert): Promise<boolean> {
   const r = await c.query(
     `insert into challenges (company_id, source_type, natural_id, source_url, evidence_confidence, buying_intent,
-       blast_radius, signal_score, department, posted_at, evidence_snippet, structured_intelligence, llm_model, author_relation)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+       blast_radius, signal_score, department, posted_at, evidence_snippet, structured_intelligence, llm_model, author_relation, urgency_tier)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
      on conflict (natural_id) do nothing`,
     [
       x.companyId,
@@ -121,6 +122,7 @@ export async function insertChallenge(c: pg.PoolClient, x: ChallengeInsert): Pro
       x.structuredIntelligence,
       x.llmModel,
       x.authorRelation ?? null,
+      x.urgencyTier ?? null,
     ],
   );
   return r.rowCount === 1;
