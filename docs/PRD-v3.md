@@ -893,6 +893,20 @@ OutreachEmail = { strategy: OutreachStrategy, subject: string.max(120), body: st
 OutreachDrafts = { recommended: OutreachStrategy, emails: OutreachEmail[3], warning_banner?: string }
 ```
 
+**Built 2026-11-08.** The dossier's **Email drafts** section has one button, Create email drafts
+(Regenerate once written). The click inserts a `draft_requests` row (migration 0024: the operator
+may only insert a queued request; one queued per company, so a double click costs nothing) and
+enqueues `draft-llm`. The worker reads the company and its evidence, strongest first: a job post
+(title, the work, may be quoted), an owner's or company page's post (may be quoted), an employee's
+post as a pattern only (no words, no source), website findings (only when there is a website).
+One call to `MODEL_DRAFTS` (default `anthropic/claude-sonnet-5.5`, ≈ $0.016 a draft, inside the
+monthly AI cap) returns the three emails; `recommendStrategy` marks one from the evidence (direct:
+a job post or the owner's words at ≥ 80 confidence; value first: website evidence; peer question
+otherwise) with its reason. Saved to `companies.outreach_drafts`, `draft_stale` cleared; new
+evidence sets it again and the dossier asks to regenerate. Each email has Copy; nothing is sent.
+A final AI failure is recorded on the request and the button retries; a request still writing
+after 10 minutes is expired by poll-runs.
+
 `StructuredIntelligence` = v2.1 §9 **minus** `outreach_draft`. `WebUiAndConversionAudit` and
 `AnonymousTrendExtraction` as v2.1, ported to Zod.
 

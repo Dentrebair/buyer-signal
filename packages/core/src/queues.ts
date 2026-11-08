@@ -25,6 +25,7 @@ export const Q = {
   purgeRaw: "purge-raw",
   auditDropped: "audit-dropped",
   dailyAlerts: "daily-alerts",
+  draftLlm: "draft-llm",
   deadLetter: "dead-letter",
 } as const;
 export type QueueName = (typeof Q)[keyof typeof Q];
@@ -111,4 +112,7 @@ export type ReadLiPost = z.infer<typeof ReadLiPost>;
 export const CardLiPost = ReadLiPost;
 export type CardLiPost = ReadLiPost;
 export const CardLiComment = z.object({ liCommentId: z.uuid() });
+// Sent only by the Create drafts button (§9).
+export const DraftLlm = z.object({ requestId: z.uuid() });
+export type DraftLlm = z.infer<typeof DraftLlm>;
 export type CardLiComment = z.infer<typeof CardLiComment>;

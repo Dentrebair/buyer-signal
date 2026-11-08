@@ -1,8 +1,9 @@
 // Triage inbox (PRD §10.1, Q67): queues + filters | ranked list | dossier.
 import Link from "next/link";
-import { ArrowLeft, ArrowSquareOut, ChartBar, Files, Fire, Flask, GlobeSimpleX, Info, MagnifyingGlass, Robot, Warning, X } from "@phosphor-icons/react/ssr";
+import { ArrowLeft, ArrowSquareOut, ChartBar, EnvelopeSimple, Files, Fire, Flask, GlobeSimpleX, MagnifyingGlass, Robot, Warning, X } from "@phosphor-icons/react/ssr";
 import { type ScoreBreakdown, type SourceFamily, type StructuredIntelligence, boardColumn, sourceFamily } from "@bs/core";
 import { ActionBar } from "@/components/ActionBar.tsx";
+import { Drafts } from "@/components/Drafts.tsx";
 import { FamilyIcon } from "@/components/FamilyIcon.tsx";
 import { PostLink } from "@/components/PostLink.tsx";
 import { FilterSelect } from "@/components/Filters.tsx";
@@ -411,9 +412,12 @@ function Dossier({ company: c, view, nextHref, selfHref }: { company: Company; v
 
           {c.domain && <WebsiteAudit company={c} />}
 
-          <p className="later">
-            <Info size={14} aria-hidden /> Email drafts are added in Sprint 3.
-          </p>
+          <section className="section" aria-labelledby="drafts">
+            <h3 id="drafts" className="section-title">
+              <EnvelopeSimple size={15} aria-hidden /> Email drafts
+            </h3>
+            <Drafts c={c} />
+          </section>
         </article>
       </div>
       <ActionBar id={c.id} domain={displayName(c)} status={c.status} nextHref={nextHref} selfHref={selfHref} />

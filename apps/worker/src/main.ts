@@ -3,10 +3,10 @@
 import * as Sentry from "@sentry/node";
 import { PgBoss } from "pg-boss";
 import { z } from "zod";
-import { type QueueName, ApifyRunEvent, CardLiComment, CardLiPost, ExtractLlm, FetchDataset, FetchLiRun, Q, ReadLiPost, SniffDomain, StartBoardRun, StartLiRun } from "@bs/core";
+import { type QueueName, ApifyRunEvent, CardLiComment, CardLiPost, DraftLlm, ExtractLlm, FetchDataset, FetchLiRun, Q, ReadLiPost, SniffDomain, StartBoardRun, StartLiRun } from "@bs/core";
 import { BudgetExceededError, createPool, gatedLlm } from "@bs/db";
 import { ApifyClient, OpenRouterClient, ProviderError, RdapClient, ResendMailer, SupabaseRawArchive, fetchPage, loadFingerprints, sniffWebsite } from "@bs/integrations";
-import { type Deps, auditDropped, dailyAlertsJob, cardLiComment, cardLiPost, driftCheck, purgeRaw, extractLlm, fetchDataset, fetchLiRun, ingestRotation, readLiPost, startLiRun, onApifyRunEvent, syncSearchArms, pollRuns, reconcileApify, resolveBatch, sniffDomain, sniffSeeds, startBoardRun } from "./jobs.ts";
+import { type Deps, auditDropped, dailyAlertsJob, draftLlm, cardLiComment, cardLiPost, driftCheck, purgeRaw, extractLlm, fetchDataset, fetchLiRun, ingestRotation, readLiPost, startLiRun, onApifyRunEvent, syncSearchArms, pollRuns, reconcileApify, resolveBatch, sniffDomain, sniffSeeds, startBoardRun } from "./jobs.ts";
 
 const env = z
   .object({
@@ -89,6 +89,8 @@ const queues: QueueDef<any>[] = [
   { name: Q.apifyRunEvent, concurrency: 1, expireInSeconds: 120, schema: ApifyRunEvent, run: onApifyRunEvent },
   { name: Q.fetchDataset, concurrency: 1, expireInSeconds: 300, schema: FetchDataset, run: fetchDataset },
   { name: Q.extractLlm, concurrency: 2, expireInSeconds: 180, schema: ExtractLlm, run: extractLlm },
+  // Email drafts (§9): only enqueued by the Create drafts button.
+  { name: Q.draftLlm, concurrency: 1, expireInSeconds: 180, schema: DraftLlm, run: draftLlm },
   // LinkedIn post search (§4.1d): Run now and the rotation's social slot; completion through poll-runs.
   { name: Q.startLiRun, concurrency: 1, expireInSeconds: 120, schema: StartLiRun, run: startLiRun },
   { name: Q.fetchLiRun, concurrency: 1, expireInSeconds: 300, schema: FetchLiRun, run: fetchLiRun },

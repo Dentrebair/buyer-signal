@@ -76,7 +76,10 @@ describe("OpenRouterClient", () => {
     expect(JSON.parse(plain.calls[0]!.body as string).plugins).toBeUndefined();
   });
 
-  it("refuses to start without the task's model setting", () => {
-    expect(() => new OpenRouterClient({ env: { OPENROUTER_API_KEY: "k" } }).model("drafts")).toThrow(/MODEL_DRAFTS/);
+  it("refuses to start without the task's model setting, unless the task has a default", () => {
+    expect(() => new OpenRouterClient({ env: { OPENROUTER_API_KEY: "k" } }).model("roast")).toThrow(/MODEL_ROAST/);
+    // Drafts (§9) default to a strong writer; MODEL_DRAFTS overrides it.
+    expect(new OpenRouterClient({ env: { OPENROUTER_API_KEY: "k" } }).model("drafts")).toBe("anthropic/claude-sonnet-5.5");
+    expect(new OpenRouterClient({ env: { OPENROUTER_API_KEY: "k", MODEL_DRAFTS: "google/gemini-3.1-pro-preview" } }).model("drafts")).toBe("google/gemini-3.1-pro-preview");
   });
 });

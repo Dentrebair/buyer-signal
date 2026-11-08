@@ -11,6 +11,7 @@ import {
   type Send,
   auditDropped,
   dailyAlertsJob,
+  draftLlm,
   cardLiComment,
   cardLiPost,
   driftCheck,
@@ -63,7 +64,7 @@ function fakes(
     ages?: Record<string, Date | null | "error">;
     sniffs?: Record<string, SniffResult>;
     lagging?: boolean; rotation?: boolean; now?: Date;
-    dataset?: object[]; liCard?: Record<string, unknown>; liRead?: (user: string) => object; leak?: (user: string) => object } = {},
+    dataset?: object[]; liCard?: Record<string, unknown>; liRead?: (user: string) => object; leak?: (user: string) => object; draftFail?: boolean } = {},
 ) {
   const sent: { queue: string; data: any; opts?: object }[] = [];
   const archived: { source: string; day: string; runId: string; part: string; items: unknown[] }[] = [];
@@ -84,6 +85,12 @@ function fakes(
           { data: req.parse({ notes: "fake", action: "finish", query: null, url: null, domain: over.resolveTo?.domain ?? null, size_band: "11-50", size_evidence_url: null, vertical_match: "yes", place_match: "yes", summary: "A test company." }) as any, model: "fake/model", costUsd: 0.002, citations: over.resolveTo?.cited ?? [] }
         : req.schemaName === "linkedin_read"
           ? { data: req.parse(over.liRead!(req.user)) as any, model: "fake/model", costUsd: 0.0004 }
+        : req.schemaName === "outreach_drafts"
+          ? (() => {
+              if (over.draftFail) throw Object.assign(new Error("invalid output"), { retryable: false });
+              const e = (strategy: string) => ({ strategy, subject: `About ${strategy}`, body: "Hi, a short note." });
+              return { data: req.parse({ emails: [e("direct_active_intent"), e("peer_benchmark_question"), e("educational_value_first")], warning_banner: null }) as any, model: "fake/writer", costUsd: 0.016 };
+            })()
         : req.schemaName === "leak_check"
           ? { data: req.parse(over.leak!(req.user)) as any, model: "fake/model", costUsd: 0.0003 }
         : req.schemaName === "linkedin_card"
@@ -423,6 +430,45 @@ describe.skipIf(!process.env.DATABASE_URL)("worker pipeline (database)", { timeo
       await c.query("update trie_proposals set status = 'approved' where id = $1", [p[0].id]);
     });
     expect((await approvedAtoms(pool)).vertical.logistics?.INTEGRATION_DEBT).toContain("leaktest rekey orders");
+  });
+
+  it("email drafts: only on request, three emails with the recommended one marked, stale cleared, one request at a time (§9)", async () => {
+    // A company with one job-post card, made the way the pipeline makes it.
+    await pool.query("delete from ingestion_runs where apify_run_id = $1", [RUN_ID]);
+    const f = fakes(pool);
+    await startBoardRun(f.deps, { country: "us", title: "Accounts Payable Clerk", vertical: "logistics", limit: 2 }, "test-draft-run");
+    await onApifyRunEvent(f.deps, { apifyRunId: RUN_ID });
+    await fetchDataset(f.deps, f.sent.find((s) => s.queue === Q.fetchDataset)!.data);
+    for (const x of f.sent.filter((s) => s.queue === Q.extractLlm)) await extractLlm(f.deps, x.data);
+    const co = (await pool.query("select c.id, c.outreach_drafts from companies c where c.domain = $1", [DOMAIN])).rows[0];
+    expect(co.outreach_drafts).toBeNull(); // making a card writes no draft
+    await pool.query("update companies set draft_stale = true where id = $1", [co.id]);
+
+    // The operator's click, under RLS: a second click while it is writing adds nothing.
+    const click = () =>
+      withTransaction(pool, async (c) => {
+        await c.query("set local role authenticated");
+        return (await c.query("insert into draft_requests (company_id) values ($1) on conflict (company_id) where status = 'queued' do nothing returning id", [co.id])).rows[0]?.id ?? null;
+      });
+    const requestId = await click();
+    expect(requestId).toBeTruthy();
+    expect(await click()).toBeNull();
+
+    expect(await draftLlm(f.deps, { requestId })).toMatch(/^drafts for .*direct_active_intent/);
+    expect(await draftLlm(f.deps, { requestId })).toBe("already done");
+    const after = (await pool.query("select outreach_drafts d, draft_stale, draft_generated_at is not null written from companies where id = $1", [co.id])).rows[0];
+    expect(after.d.recommended).toBe("direct_active_intent");
+    expect(after.d.emails.map((e: { strategy: string }) => e.strategy)).toEqual(["direct_active_intent", "peer_benchmark_question", "educational_value_first"]);
+    expect(after).toMatchObject({ draft_stale: false, written: true });
+    expect((await pool.query("select status, model, cost_usd::float from draft_requests where id = $1", [requestId])).rows[0]).toEqual({ status: "done", model: "fake/writer", cost_usd: 0.016 });
+
+    // The AI's output invalid for good: the request is marked so the button can try again.
+    const again = await click();
+    await expect(draftLlm(fakes(pool, { draftFail: true }).deps, { requestId: again })).rejects.toThrow();
+    expect((await pool.query("select status, error from draft_requests where id = $1", [again])).rows[0]).toEqual({ status: "error", error: "invalid output" });
+    expect(await click()).toBeTruthy(); // a failed request no longer blocks a new one
+    await pool.query("delete from ingestion_runs where apify_run_id = $1", [RUN_ID]);
+    await pool.query("delete from spend_events where ref = $1", [RUN_ID]);
   });
 
   it("daily alerts: saved for /health, emailed once when a mailer is set, a failed email loses nothing (Q65)", async () => {

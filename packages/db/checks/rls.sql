@@ -66,6 +66,14 @@ select pg_temp.try('authenticated', 'operator edit a phrase', 'blocked', 'update
 select pg_temp.try('authenticated', 'operator approve a proposal', 'allowed', 'update trie_proposals set status = ''approved'' where phrase = ''rls test phrase''');
 select pg_temp.try('authenticated', 'operator re-decide a decided one', 'blocked', 'do $$ begin update trie_proposals set status = ''rejected'' where phrase = ''rls test phrase''; if not found then raise exception ''no row''; end $$');
 delete from trie_proposals where phrase = 'rls test phrase';
+-- Drafts (0024): the operator may ask for drafts (insert a queued request) and read them; only
+-- the worker records the result.
+select pg_temp.try('authenticated', 'operator request drafts', 'allowed', 'insert into draft_requests (company_id) select id from companies where domain = ''rls-test.example''');
+select pg_temp.try('authenticated', 'operator read draft requests', 'allowed', 'select count(*) from draft_requests');
+select pg_temp.try('anon', 'anon read draft requests', 'blocked', 'select count(*) from draft_requests');
+select pg_temp.try('authenticated', 'operator mark a request done', 'blocked', 'update draft_requests set status = ''done''');
+select pg_temp.try('authenticated', 'operator write drafts on a company', 'blocked', 'update companies set outreach_drafts = ''{}'' where domain = ''rls-test.example''');
+delete from draft_requests where company_id in (select id from companies where domain = 'rls-test.example');
 -- Alerts (0023): read only.
 select pg_temp.try('authenticated', 'operator read alerts', 'allowed', 'select count(*) from alerts');
 select pg_temp.try('anon', 'anon read alerts', 'blocked', 'select count(*) from alerts');

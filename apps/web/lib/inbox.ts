@@ -1,5 +1,5 @@
 // Inbox queries (PRD §10.1). Queues and filters come from the URL so a view can be bookmarked.
-import type { ScoreBreakdown, SizeTier, SourceFamily, SourceType, StructuredIntelligence } from "@bs/core";
+import type { OutreachDrafts, ScoreBreakdown, SizeTier, SourceFamily, SourceType, StructuredIntelligence } from "@bs/core";
 import type { AuditCompany } from "@/components/WebsiteAudit.tsx";
 import { FULL_AUTOMATION_PCT, PRODUCT_LAYERS, SCOPES, type Scope, URGENCY_TIERS, type UrgencyTier } from "./labels.ts";
 import { asOperator } from "./operator.ts";
@@ -121,6 +121,12 @@ export interface Company extends Row {
   actioned_at: string | null;
   company_check: CompanyCheckView | null;
   challenges: Challenge[];
+  // Email drafts (§9): the last ones written, whether newer evidence has arrived since, and the
+  // latest Create drafts click (still writing, done or failed).
+  outreach_drafts: OutreachDrafts | null;
+  draft_stale: boolean;
+  draft_generated_at: string | null;
+  draft_request: { status: "queued" | "done" | "error"; error: string | null; model: string | null; cost_usd: number | null; requested_at: string } | null;
 }
 
 // What the company-check agent found (PRD §5.1a), as stored on the company.
@@ -222,7 +228,14 @@ export function loadInbox(view: View): Promise<Inbox> {
             [selectedId],
           )
         ).rows;
-        selected = { ...co, challenges } as Company;
+        const draft_request =
+          (
+            await c.query(
+              "select status, error, model, cost_usd::float, requested_at from draft_requests where company_id = $1 order by requested_at desc limit 1",
+              [selectedId],
+            )
+          ).rows[0] ?? null;
+        selected = { ...co, challenges, draft_request } as Company;
       }
     }
 

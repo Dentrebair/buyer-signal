@@ -60,6 +60,9 @@ import {
   type RawArchive,
   type ApprovedAtoms,
   type Mailer,
+  type DraftLlm,
+  buildDrafts,
+  recommendStrategy,
   alertEmail,
   dailyAlerts,
   AUDIT_PER_DAY,
@@ -126,6 +129,11 @@ import {
   upsertCompany,
   saveCompanyCheck,
   approvedAtoms,
+  draftInput,
+  draftRequest,
+  expireDraftRequests,
+  failDraft,
+  saveDrafts,
   alertInputs,
   saveAlerts,
   markSampleError,
@@ -882,6 +890,29 @@ export async function auditDropped(d: Pick<Deps, "pool" | "llm" | "log">, idPref
   return out;
 }
 
+// ── draft-llm (§9): only from the Create drafts button ───────────────────────
+// Three emails, one per strategy; the code marks the recommended one from the evidence. Inside
+// the monthly AI cap like every call. A final AI failure is recorded so the button can retry.
+export async function draftLlm(d: Pick<Deps, "pool" | "llm" | "log">, job: DraftLlm): Promise<string> {
+  const req = await draftRequest(d.pool, job.requestId);
+  if (!req) return "request gone";
+  if (req.status !== "queued") return "already done";
+  const company = await draftInput(d.pool, req.companyId);
+  if (!company) {
+    await failDraft(d.pool, req.id, "Company not found");
+    return "company gone";
+  }
+  const out = await d.llm.json("drafts", buildDrafts(company)).catch(async (e: unknown) => {
+    if ((e as { retryable?: unknown }).retryable === false) await failDraft(d.pool, req.id, (e as Error).message);
+    throw e;
+  });
+  const pick = recommendStrategy(company.evidence);
+  await withTransaction(d.pool, (c) =>
+    saveDrafts(c, { requestId: req.id, companyId: req.companyId, drafts: { ...out.data, recommended: pick.strategy, why: pick.why }, model: out.model, costUsd: out.costUsd }),
+  );
+  return `drafts for ${company.name} (${pick.strategy}, $${out.costUsd.toFixed(4)})`;
+}
+
 // ── daily-alerts (Q65) ──────────────────────────────────────────────────────
 // After the night's jobs: what needs the operator is saved (shown on /health) and, when a mailer
 // is set up, emailed once. A failed email is logged; the alerts stay saved.
@@ -926,6 +957,7 @@ export async function pollRuns(d: Deps): Promise<number> {
   for (const r of runs) await d.send(Q.apifyRunEvent, { apifyRunId: r.apify_run_id, recheck: 0 } satisfies ApifyRunEvent, { singletonKey: r.apify_run_id });
   await purgeSocialResults(d.pool);
   await purgeLinkedin(d.pool);
+  await expireDraftRequests(d.pool);
   return runs.length;
 }
 

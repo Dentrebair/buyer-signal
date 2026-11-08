@@ -10,7 +10,8 @@
     "./social": "./src/social.ts",
     "./liSearch": "./src/liSearch.ts",
     "./tier": "./src/tier.ts",
-    "./bandit": "./src/bandit.ts"
+    "./bandit": "./src/bandit.ts",
+    "./drafts": "./src/drafts.ts"
   },
   "dependencies": {
     "cheerio": "1.2.0",

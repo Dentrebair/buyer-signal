@@ -10,6 +10,10 @@ const MODEL_ENV: Record<LlmTask, string> = {
   roast: "MODEL_ROAST",
 };
 
+// A task with no model set falls back here. Drafts (§9) want a strong writer; on demand only, so
+// ≈ $0.016 a draft at OpenRouter's price (2026-11-08: $2 / $10 per million tokens in / out).
+const DEFAULT_MODEL: Partial<Record<LlmTask, string>> = { drafts: "anthropic/claude-sonnet-5.5" };
+
 export class ProviderError extends Error {
   constructor(
     message: string,
@@ -59,7 +63,7 @@ export class OpenRouterClient implements LlmClient {
   }
 
   model(task: LlmTask): string {
-    const m = this.env[MODEL_ENV[task]];
+    const m = this.env[MODEL_ENV[task]] || DEFAULT_MODEL[task];
     if (!m) throw new Error(`${MODEL_ENV[task]} is not set`);
     return m;
   }
