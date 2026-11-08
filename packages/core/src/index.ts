@@ -17,5 +17,7 @@ export * from "./scope.ts";
 export * from "./queues.ts";
 export * from "./resolve.ts";
 export * from "./companyCheck.ts";
+export * from "./drift.ts";
+export * from "./evals.ts";
 export * from "./techstack.ts";
 export * from "./website.ts";

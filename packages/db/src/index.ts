@@ -7,3 +7,4 @@ export * from "./sniff.ts";
 export * from "./social.ts";
 export * from "./arms.ts";
 export * from "./linkedin.ts";
+export * from "./health.ts";

@@ -252,6 +252,26 @@ Sent cards and weekly AI suggestions (Q7), which come with the proposals step.
 4. Proposals after each run, with Approve / Reject.
 5. The learned score, once the verdict threshold is met.
 
+**Health: drift check and AI test set (agreed and built 2026-11-08).** The AI and the searches can
+drift unnoticed: a model update or prompt edit makes the AI lenient, and the bandit, rewarded on
+cards, then chases junk. Two checks, both on the Sources page under **Health**:
+- **Drift check** (`drift-check`, daily 05:30 UTC, free, SQL only; core `drift.ts`): the last 7
+  days against the 14 before, for LinkedIn posts with pain, pain posts that became cards, pain
+  posts outside our markets, posts the AI could not read, judged cards rejected as not real pain
+  or the wrong company, company checks that found a website, and AI cost per card. A share is
+  flagged when a two-proportion z test passes 2.58 (≥ 20 cases in each period); cost per card when
+  it doubles or halves (≥ 5 cards each). A jump is flagged as well as a fall. Stored in
+  `drift_checks`; the inbox sidebar shows what moved, worst first.
+- **AI test set** (`eval_cases`, `eval_runs`; core `evals.ts`): on LinkedIn search's Posts tab the
+  operator gives a post a verdict (a lead / pain, not a lead / no pain). The post is copied without
+  the author's name, first name or emails, so it outlives the 60-day purge; a surname alone stays,
+  as it is often the company's name. `npm run eval` re-reads every case with today's prompt and
+  model (≈ $0.0004 a post, inside the monthly AI cap) and stores pain and lead precision and recall,
+  agreement, the disagreements, the model and the prompt's hash. Run it after any prompt or model
+  change, and weekly. Target: 50 posts, at least 10 leads.
+- **Not yet:** an eval of the company-check agent. It needs ground truth: the operator's Sent cards
+  (right website) and `wrong_company` rejections; none exist yet (2026-11-08: 62 cards, 0 verdicts).
+
 Feasibility notes (2026-11-07, from the spend log: 529 AI reads at ≈ $0.0018, 4 searched resolves
 at ≈ $0.006): an agent that scores every post would cost ≈ $0.02 a post (10×) for little gain,
 since judging one post is one step; scoring stays a single AI read, and learning stays in the

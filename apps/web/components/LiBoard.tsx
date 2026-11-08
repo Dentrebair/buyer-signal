@@ -3,6 +3,7 @@
 // post | its contacts. A link to "#post-<id>" from another tab selects that post.
 import { useEffect, useRef, useState } from "react";
 import { ArrowSquareOut } from "@phosphor-icons/react/ssr";
+import { EvalLabel } from "@/components/EvalLabel.tsx";
 import { Author, Commenter, ContactFacts, Person, PostMeta, ROLE, Verdict, excerpt, plural } from "@/components/LiParts.tsx";
 import type { LiPostRow } from "@/lib/linkedin.ts";
 
@@ -76,6 +77,7 @@ export function LiBoard({ posts }: { posts: LiPostRow[] }) {
           Open on LinkedIn <ArrowSquareOut size={13} aria-hidden />
           <span className="sr-only">(opens in a new tab)</span>
         </a>
+        {selected.status === "read" && <EvalLabel key={selected.id} postId={selected.id} label={selected.eval_label} />}
       </section>
 
       <section className="li-col li-col-contacts" aria-label="Contacts on the selected post">

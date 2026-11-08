@@ -170,6 +170,33 @@ select:disabled { opacity: 0.45; cursor: not-allowed; }
 .segmented a:hover { color: var(--color-ink); background: var(--color-paper-2); }
 .segmented a[aria-current="true"] { color: var(--color-accent-ink); background: var(--color-ink); }
 [data-theme="dark"] .segmented a[aria-current="true"] { color: var(--color-paper); }
+/* The same control as buttons (the AI test set's labels). */
+.segmented button {
+  display: inline-flex; align-items: center; min-height: 32px; padding: 0 var(--space-sm); border: 0; background: transparent;
+  font: 600 var(--text-sm)/1 var(--font-display); color: var(--color-muted); cursor: pointer;
+  transition: background-color var(--dur-micro) var(--ease-out);
+}
+.segmented button + button { border-left: var(--rule-hair) solid var(--color-rule-2); }
+.segmented button:hover:not(:disabled) { color: var(--color-ink); background: var(--color-paper-2); }
+.segmented button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; transition: none; }
+.segmented button[aria-pressed="true"] { color: var(--color-accent-ink); background: var(--color-ink); }
+[data-theme="dark"] .segmented button[aria-pressed="true"] { color: var(--color-paper); }
+.segmented button:disabled { cursor: progress; }
+.eval-label { display: grid; gap: var(--space-2xs); justify-items: start; margin-top: var(--space-md); padding-top: var(--space-sm); border-top: var(--rule-hair) solid var(--color-rule); }
+.eval-label .segmented { flex-wrap: wrap; max-width: 100%; }
+/* Inbox sidebar: a health number moved at the latest drift check (links to Sources, Health). */
+.health-alert {
+  display: flex; gap: var(--space-xs); align-items: flex-start; margin-top: var(--space-xs); padding: var(--space-xs) var(--space-sm);
+  border: var(--rule-hair) solid var(--color-rule-2); border-radius: var(--radius-card); color: var(--color-ink); font-size: var(--text-sm); line-height: 1.4;
+  text-decoration: none; transition: background-color var(--dur-micro) var(--ease-out);
+}
+.health-alert svg { flex: none; margin-top: var(--space-3xs); color: var(--color-muted); }
+.health-alert.is-worse { border-color: var(--color-error); }
+.health-alert.is-worse svg { color: var(--color-error); }
+.health-sub { margin-top: var(--space-md); font-size: var(--text-md); }
+.runs.health td:first-child { min-width: 14rem; }
+.health-alert:hover { background: var(--color-paper-2); }
+.health-alert:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; transition: none; }
 
 .row {
   position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: var(--space-md); row-gap: var(--space-2xs);

@@ -4,12 +4,13 @@ import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type pg from "pg";
 import { type LlmClient, type StructuredIntelligence, Q, apifyCycleKey, auditSite, parseHtml } from "@bs/core";
-import { claimSeeds, createPool } from "@bs/db";
+import { claimSeeds, createPool, labelLiPost, withTransaction } from "@bs/db";
 import type { ApifyRun, SniffResult } from "@bs/integrations";
 import {
   type Deps,
   type Send,
   cardLiPost,
+  driftCheck,
   extractLlm,
   fetchDataset,
   fetchLiRun,
@@ -149,6 +150,8 @@ async function cleanup(pool: pg.Pool) {
   await pool.query("delete from companies where name_key like 'us:li test freight%'");
   await pool.query("delete from resolve_queue where natural_id like 'post:linkedin:%' and payload::text like '%Li Test Freight%'");
   await pool.query("delete from domain_cache where key like 'li test freight%'");
+  await pool.query("delete from eval_cases where headline like '%Li Test Freight%'");
+  await pool.query("delete from drift_checks where day = '2000-01-05'");
   // Arms the tests' runs created (typed titles), once their runs are gone.
   await pool.query("delete from search_arms a where a.source = 'manual' and not exists (select 1 from run_arms ra where ra.run_id is not null and ra.arm_id = a.id)");
 }
@@ -338,8 +341,28 @@ describe.skipIf(!process.env.DATABASE_URL)("worker pipeline (database)", { timeo
     await pool.query("update li_posts set card_outcome = 'checking' where post_id = $1", [P1]);
     expect(await cardLiPost(deps, cards[0]!.data)).toBe("duplicate");
     await pool.query("delete from resolve_queue where natural_id = $1", [`post:linkedin:${P1}`]);
+
+    // The operator labels a post for the AI test set: copied without the author's name or email.
+    const p1 = (await pool.query("select id from li_posts where post_id = $1", [P1])).rows[0].id;
+    expect(await withTransaction(pool, (c) => labelLiPost(c, p1, "lead"))).toBe(true);
+    expect(await withTransaction(pool, (c) => labelLiPost(c, p1, "pain"))).toBe(true); // a change of mind replaces it
+    const ec = (await pool.query("select text, headline, label from eval_cases where li_post_id = $1", [p1])).rows;
+    expect(ec).toEqual([{ text: "We still check every freight invoice by hand.", headline: "Operations Manager at Li Test Freight | [email]", label: "pain" }]);
+    expect(await withTransaction(pool, (c) => labelLiPost(c, p1, null))).toBe(true);
+    expect((await pool.query("select count(*)::int n from eval_cases where li_post_id = $1", [p1])).rows[0].n).toBe(0);
     await pool.query("delete from ingestion_runs where apify_run_id = $1", [RUN_ID]); // posts and comments go with it
     await pool.query("delete from spend_events where ref = $1", [RUN_ID]);
+  });
+
+  it("drift check: every health number judged and stored once a day, free (agreed 2026-11-08)", async () => {
+    const day = new Date("2000-01-05T05:30:00Z"); // test-only: nothing happened in the weeks before it
+    const out = await driftCheck({ pool, now: () => day, log: () => {} });
+    expect(out).toEqual({ moved: [] });
+    await driftCheck({ pool, now: () => day, log: () => {} }); // a re-run the same day replaces the rows
+    const rows = (await pool.query("select metric, verdict from drift_checks where day = '2000-01-05' order by metric")).rows;
+    expect(rows).toHaveLength(7);
+    expect(rows.every((r) => r.verdict === "too_few")).toBe(true);
+    await pool.query("delete from drift_checks where day = '2000-01-05'");
   });
 
   it("ingest-rotation: off by default; when on, the bandit plans the day once (§4.1c)", async () => {

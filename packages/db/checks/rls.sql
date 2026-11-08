@@ -47,6 +47,14 @@ select pg_temp.try('authenticated', 'operator write li_posts', 'blocked', 'updat
 select pg_temp.try('authenticated', 'operator read li_comments', 'allowed', 'select count(*) from li_comments');
 select pg_temp.try('anon', 'anon read li_comments', 'blocked', 'select count(*) from li_comments');
 select pg_temp.try('authenticated', 'operator write li_comments', 'blocked', 'delete from li_comments');
+select pg_temp.try('authenticated', 'operator read drift_checks', 'allowed', 'select count(*) from drift_checks');
+select pg_temp.try('anon', 'anon read drift_checks', 'blocked', 'select count(*) from drift_checks');
+select pg_temp.try('authenticated', 'operator write drift_checks', 'blocked', 'delete from drift_checks');
+select pg_temp.try('authenticated', 'operator read eval_runs', 'allowed', 'select count(*) from eval_runs');
+select pg_temp.try('authenticated', 'operator write eval_runs', 'blocked', 'delete from eval_runs');
+select pg_temp.try('anon', 'anon read eval_cases', 'blocked', 'select count(*) from eval_cases');
+select pg_temp.try('authenticated', 'operator label eval_cases', 'allowed', 'insert into eval_cases (text, author_type, label) values (''rls test'', ''person'', ''none'')');
+select pg_temp.try('authenticated', 'operator remove eval_cases', 'allowed', 'delete from eval_cases where text = ''rls test''');
 -- Status trigger (migration 0002): the inbox's Reject / Undo path, run as the operator.
 update companies set priority_score = 77, status = 'new', score_breakdown = '{"families":["job_post"]}' where domain = 'rls-test.example';
 select pg_temp.try('authenticated', 'operator lock row for action', 'allowed', 'select 1 from companies where domain = ''rls-test.example'' for update');

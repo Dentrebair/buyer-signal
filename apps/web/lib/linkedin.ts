@@ -59,6 +59,7 @@ export interface LiPostRow {
   author_country: string | null;
   card_outcome: string | null; // whether it became an inbox card, and why not (§4.1d)
   card_company_id: string | null;
+  eval_label: "lead" | "pain" | "none" | null; // the operator's label for the AI test set
   comments: LiCommentRow[];
 }
 
@@ -94,8 +95,9 @@ export function loadLinkedin(runId?: string | null): Promise<LinkedinPage> {
         await c.query<Omit<LiPostRow, "comments">>(
           `select p.id, p.url, p.posted_at, p.body, p.author_type, p.author_name, p.author_headline, p.author_url, p.author_website, p.author_company,
                   p.author_relation, p.stance, p.likes, p.comment_count, p.status, p.has_pain, p.pains, p.emails, p.author_country, p.card_outcome,
-                  ch.company_id card_company_id
+                  ch.company_id card_company_id, ec.label eval_label
              from li_posts p left join challenges ch on ch.natural_id = 'post:linkedin:' || p.post_id
+             left join eval_cases ec on ec.li_post_id = p.id
             where p.run_id = $1
             order by p.has_pain desc nulls last, p.likes + p.comment_count desc`,
           [shown.id],

@@ -1,18 +1,19 @@
 // Sources (PRD §10.3): one row per data source, its latest activity and a Run now control.
 // The daily rotation is off for now (worker main.ts), so job posts arrive only from Run now.
 import Link from "next/link";
-import { ArrowLeft, ArrowSquareOut, Briefcase, Browser, LinkedinLogo, ListMagnifyingGlass, MagnifyingGlass } from "@phosphor-icons/react/ssr";
+import { ArrowLeft, ArrowSquareOut, Briefcase, Browser, Heartbeat, LinkedinLogo, ListMagnifyingGlass, MagnifyingGlass } from "@phosphor-icons/react/ssr";
 import { AutoRefresh, ReviveSearch, RunJobPosts, RunProgress, RunSource } from "@/components/RunNow.tsx";
 import { Facts, Meta } from "@/components/Meta.tsx";
 import { PostLink } from "@/components/PostLink.tsx";
 import { ThemeToggle } from "@/components/ThemeToggle.tsx";
 import { ageLabel, countryLabel, verticalLabel } from "@/lib/labels.ts";
+import { type Health, healthValue, loadHealth } from "@/lib/health.ts";
 import { type BoardRun, type SearchPost, type SearchRow, loadSources } from "@/lib/sources.ts";
 
 export const dynamic = "force-dynamic";
 
 export default async function Radar() {
-  const s = await loadSources();
+  const [s, health] = await Promise.all([loadSources(), loadHealth()]);
   const j = s.jobs;
   return (
     <div className="radar">
@@ -120,6 +121,7 @@ export default async function Radar() {
             </Link>
           </div>
         </section>
+        <HealthSection h={health} />
         <Searches rows={s.searches.rows} untried={s.searches.untried} />
       </main>
     </div>
@@ -244,6 +246,119 @@ function SearchPosts({ posts }: { posts: SearchPost[] }) {
         })}
       </ul>
     </details>
+  );
+}
+
+// Health (agreed 2026-11-08): has the AI or a search drifted? The drift check compares the last
+// 7 days with the 14 before; the AI test set scores the AI against the operator's labels.
+const VERDICT: Record<string, string> = { ok: "Steady", too_few: "Too few to judge" };
+const pct = (x: number | null) => (x === null ? "—" : `${Math.round(x * 100)}%`);
+
+function HealthSection({ h }: { h: Health }) {
+  const labelled = h.labelled.lead + h.labelled.pain + h.labelled.none;
+  const last = h.evals[0];
+  return (
+    <section className="card source" aria-labelledby="src-health" id="src-health">
+      <div className="source-head">
+        <h2 id="src-health">
+          <Heartbeat size={18} aria-hidden /> Health
+        </h2>
+        <Meta className="source-meta" items={["Free", "Runs by itself daily at 05:30 UTC", h.day && `Last check ${ageLabel(h.day)}`]} />
+      </div>
+      <p className="muted source-note">
+        The last 7 days against the 14 before. A number is marked when it moved more than chance explains: a fall in leads, or a jump the AI
+        may have caused by turning lenient.
+      </p>
+      {h.drift.length === 0 ? (
+        <p className="muted">Not checked yet.</p>
+      ) : (
+        <div className="runs-wrap">
+          <table className="runs health">
+            <caption className="sr-only">Health numbers, the 14 days before against the last 7 days</caption>
+            <thead>
+              <tr>
+                <th scope="col">Number</th>
+                <th scope="col" className="r">
+                  14 days before
+                </th>
+                <th scope="col" className="r">
+                  Last 7 days
+                </th>
+                <th scope="col">Verdict</th>
+              </tr>
+            </thead>
+            <tbody>
+              {h.drift.map((r) => (
+                <tr key={r.metric}>
+                  <td>{r.label}</td>
+                  <td className="r">
+                    <span className="num">{healthValue(r, r.base)}</span> <span className="muted">of {r.baseN}</span>
+                  </td>
+                  <td className="r">
+                    <span className="num">{healthValue(r, r.window)}</span> <span className="muted">of {r.windowN}</span>
+                  </td>
+                  <td className={r.worse ? "is-error" : undefined}>
+                    {r.verdict === "moved" ? `Moved ${r.direction}${r.worse ? ", worse" : ""}` : VERDICT[r.verdict]}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <RunSource source="drift" label="health check" />
+
+      <h3 className="health-sub">AI test set</h3>
+      <p className="muted source-note">
+        {labelled === 0
+          ? "No posts labelled yet. On LinkedIn search, Posts tab, give each post your verdict: a lead, pain but not a lead, or no pain. Aim for 50, at least 10 of them leads."
+          : `${labelled} posts labelled: ${h.labelled.lead} leads, ${h.labelled.pain} pain but not a lead, ${h.labelled.none} no pain.`}{" "}
+        Run <code>npm run eval</code> after any prompt or model change, and weekly: about $0.0004 a post.
+      </p>
+      {last && (
+        <div className="runs-wrap">
+          <table className="runs health">
+            <caption className="sr-only">Latest AI test set scores</caption>
+            <thead>
+              <tr>
+                <th scope="col">Run</th>
+                <th scope="col">Model, prompt</th>
+                <th scope="col" className="r">
+                  Posts
+                </th>
+                <th scope="col" className="r">
+                  Pain found
+                </th>
+                <th scope="col" className="r">
+                  Leads found
+                </th>
+                <th scope="col" className="r">
+                  Wrong leads
+                </th>
+                <th scope="col" className="r">
+                  Agreement
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {h.evals.map((e) => (
+                <tr key={e.created_at}>
+                  <td>{ageLabel(e.created_at)}</td>
+                  <td>
+                    {e.model} <span className="muted num">{e.prompt_hash}</span>
+                  </td>
+                  <td className="r num">{e.cases}</td>
+                  <td className="r num">{pct(e.pain_recall)}</td>
+                  <td className="r num">{pct(e.lead_recall)}</td>
+                  <td className="r num">{e.lead_precision === null ? "—" : pct(1 - e.lead_precision)}</td>
+                  <td className="r num">{pct(e.agreement)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   );
 }
 

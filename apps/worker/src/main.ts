@@ -5,7 +5,7 @@ import { z } from "zod";
 import { type QueueName, ApifyRunEvent, CardLiPost, ExtractLlm, FetchDataset, FetchLiRun, Q, ReadLiPost, SniffDomain, StartBoardRun, StartLiRun } from "@bs/core";
 import { BudgetExceededError, createPool, gatedLlm } from "@bs/db";
 import { ApifyClient, OpenRouterClient, ProviderError, RdapClient, fetchPage, loadFingerprints, sniffWebsite } from "@bs/integrations";
-import { type Deps, cardLiPost, extractLlm, fetchDataset, fetchLiRun, ingestRotation, readLiPost, startLiRun, onApifyRunEvent, syncSearchArms, pollRuns, reconcileApify, resolveBatch, sniffDomain, sniffSeeds, startBoardRun } from "./jobs.ts";
+import { type Deps, cardLiPost, driftCheck, extractLlm, fetchDataset, fetchLiRun, ingestRotation, readLiPost, startLiRun, onApifyRunEvent, syncSearchArms, pollRuns, reconcileApify, resolveBatch, sniffDomain, sniffSeeds, startBoardRun } from "./jobs.ts";
 
 const env = z
   .object({
@@ -86,6 +86,8 @@ const queues: QueueDef<any>[] = [
   { name: Q.ingestRotation, concurrency: 1, expireInSeconds: 120, schema: z.unknown(), run: (d) => ingestRotation(d) },
   { name: Q.pollRuns, concurrency: 1, expireInSeconds: 120, schema: z.unknown(), run: (d) => pollRuns(d) },
   { name: Q.reconcileApify, concurrency: 1, expireInSeconds: 120, schema: z.unknown(), run: (d) => reconcileApify(d) },
+  // Free (SQL only): has the AI or a search drifted? Results on the inbox and Sources pages.
+  { name: Q.driftCheck, concurrency: 1, expireInSeconds: 120, schema: z.unknown(), run: (d) => driftCheck(d) },
 ];
 
 async function main() {
@@ -127,6 +129,7 @@ async function main() {
   await boss.schedule(Q.pollRuns, "*/5 * * * *");
   await boss.schedule(Q.reconcileApify, "15 3 * * *");
   await boss.schedule(Q.resolveBatch, "0 4 * * *");
+  await boss.schedule(Q.driftCheck, "30 5 * * *"); // after the night's runs and resolves
   await boss.schedule(Q.sniffSeeds, "*/10 * * * *");
   // Daily rotation: off for now; runs are started by hand (Run now). To enable, uncomment and
   // set ROTATION_ENABLED=true. 02:00 is before the 04:00 resolve batch, so the day's new posts

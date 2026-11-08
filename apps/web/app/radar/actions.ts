@@ -18,15 +18,18 @@ export async function runJobPosts(raw: unknown): Promise<RunResult> {
   return { ok: true, message: `Started: ${parsed.data.limit} × "${parsed.data.title}". New cards appear in the inbox in a few minutes.` };
 }
 
-export async function runSource(source: "sniff" | "search"): Promise<RunResult> {
-  if (source !== "sniff" && source !== "search") return { ok: false, message: "Unknown source." };
+const SOURCE = {
+  sniff: { queue: Q.sniffSeeds, message: "Website check started for waiting sites." },
+  search: { queue: Q.resolveBatch, message: "Website search started, within today's search quota." },
+  drift: { queue: Q.driftCheck, message: "Health check started: free, results in a few seconds." },
+} as const;
+
+export async function runSource(source: "sniff" | "search" | "drift"): Promise<RunResult> {
+  if (!Object.hasOwn(SOURCE, source)) return { ok: false, message: "Unknown source." };
   await asOperator(async () => {});
-  await (await queue()).send(source === "sniff" ? Q.sniffSeeds : Q.resolveBatch, {});
+  await (await queue()).send(SOURCE[source].queue, {});
   revalidatePath("/radar");
-  return {
-    ok: true,
-    message: source === "sniff" ? "Website check started for waiting sites." : "Website search started, within today's search quota.",
-  };
+  return { ok: true, message: SOURCE[source].message };
 }
 
 // Searches table (§4.1c): bring a retired search back; it gets RETIRE_AFTER_RUNS fresh runs.

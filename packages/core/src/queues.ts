@@ -20,6 +20,7 @@ export const Q = {
   cardLiPost: "card-li-post",
   pollRuns: "poll-runs",
   reconcileApify: "reconcile-apify",
+  driftCheck: "drift-check",
   deadLetter: "dead-letter",
 } as const;
 export type QueueName = (typeof Q)[keyof typeof Q];

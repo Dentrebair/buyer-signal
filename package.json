@@ -19,6 +19,7 @@
     "db:check-rls": "node --env-file=.env.local -e \"require('child_process').execFileSync('psql',[process.env.DATABASE_URL,'-X','-q','-v','ON_ERROR_STOP=1','-f','packages/db/checks/rls.sql'],{stdio:'inherit'})\"",
     "db:unseed": "node --env-file=.env.local --import tsx scripts/unseed-sprint0.ts",
     "worker": "node --env-file=.env.local --import tsx apps/worker/src/main.ts",
+    "eval": "node --env-file=.env.local --import tsx apps/worker/src/eval.ts",
     "ingest:once": "node --env-file=.env.local --import tsx scripts/ingest-once.ts",
     "apify:webhook": "node --env-file=.env.local --import tsx scripts/apify-webhook.ts",
     "search:test": "node --env-file=.env.local --import tsx scripts/search-test.ts",
