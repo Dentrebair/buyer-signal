@@ -8,7 +8,9 @@
     "./verticals": "./src/verticals.ts",
     "./scope": "./src/scope.ts",
     "./social": "./src/social.ts",
-    "./tier": "./src/tier.ts"
+    "./liSearch": "./src/liSearch.ts",
+    "./tier": "./src/tier.ts",
+    "./bandit": "./src/bandit.ts"
   },
   "dependencies": {
     "cheerio": "1.2.0",

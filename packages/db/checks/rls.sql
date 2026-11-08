@@ -35,6 +35,18 @@ select pg_temp.try('anon', 'anon read resolve_queue', 'blocked', 'select count(*
 select pg_temp.try('authenticated', 'operator read social_results', 'allowed', 'select count(*) from social_results');
 select pg_temp.try('anon', 'anon read social_results', 'blocked', 'select count(*) from social_results');
 select pg_temp.try('authenticated', 'operator write social_results', 'blocked', 'delete from social_results');
+select pg_temp.try('authenticated', 'operator read search_arms', 'allowed', 'select count(*) from search_arms');
+select pg_temp.try('anon', 'anon read search_arms', 'blocked', 'select count(*) from search_arms');
+select pg_temp.try('authenticated', 'operator insert search_arms', 'blocked', 'insert into search_arms (kind, country, term, grp) values (''job'', ''us'', ''x'', ''low'')');
+select pg_temp.try('authenticated', 'operator rename an arm', 'blocked', 'update search_arms set term = ''x''');
+select pg_temp.try('authenticated', 'operator read run_arms', 'allowed', 'select count(*) from run_arms');
+select pg_temp.try('authenticated', 'operator write run_arms', 'blocked', 'delete from run_arms');
+select pg_temp.try('authenticated', 'operator read li_posts', 'allowed', 'select count(*) from li_posts');
+select pg_temp.try('anon', 'anon read li_posts', 'blocked', 'select count(*) from li_posts');
+select pg_temp.try('authenticated', 'operator write li_posts', 'blocked', 'update li_posts set has_pain = true');
+select pg_temp.try('authenticated', 'operator read li_comments', 'allowed', 'select count(*) from li_comments');
+select pg_temp.try('anon', 'anon read li_comments', 'blocked', 'select count(*) from li_comments');
+select pg_temp.try('authenticated', 'operator write li_comments', 'blocked', 'delete from li_comments');
 -- Status trigger (migration 0002): the inbox's Reject / Undo path, run as the operator.
 update companies set priority_score = 77, status = 'new', score_breakdown = '{"families":["job_post"]}' where domain = 'rls-test.example';
 select pg_temp.try('authenticated', 'operator lock row for action', 'allowed', 'select 1 from companies where domain = ''rls-test.example'' for update');

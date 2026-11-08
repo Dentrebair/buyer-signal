@@ -2,10 +2,10 @@
 // Usage: npm run worker
 import { PgBoss } from "pg-boss";
 import { z } from "zod";
-import { type QueueName, ApifyRunEvent, ExtractLlm, ExtractSocial, FetchDataset, FetchSocial, Q, SniffDomain, StartBoardRun, StartSocialRun } from "@bs/core";
+import { type QueueName, ApifyRunEvent, CardLiPost, ExtractLlm, FetchDataset, FetchLiRun, Q, ReadLiPost, SniffDomain, StartBoardRun, StartLiRun } from "@bs/core";
 import { BudgetExceededError, createPool, gatedLlm } from "@bs/db";
 import { ApifyClient, OpenRouterClient, ProviderError, RdapClient, fetchPage, loadFingerprints, sniffWebsite } from "@bs/integrations";
-import { type Deps, extractLlm, extractSocial, fetchDataset, fetchSocial, ingestRotation, onApifyRunEvent, pollRuns, reconcileApify, resolveBatch, sniffDomain, sniffSeeds, startBoardRun, startSocialRun } from "./jobs.ts";
+import { type Deps, cardLiPost, extractLlm, fetchDataset, fetchLiRun, ingestRotation, readLiPost, startLiRun, onApifyRunEvent, syncSearchArms, pollRuns, reconcileApify, resolveBatch, sniffDomain, sniffSeeds, startBoardRun } from "./jobs.ts";
 
 const env = z
   .object({
@@ -16,6 +16,9 @@ const env = z
     ROTATION_ENABLED: z.enum(["true", "false"]).default("false"),
     BOARD_SLOTS_PER_DAY: z.coerce.number().int().min(0).max(45).default(3),
     BOARD_POSTS_PER_SLOT: z.coerce.number().int().min(1).max(100).default(35),
+    SOCIAL_SLOTS_PER_DAY: z.coerce.number().int().min(0).max(5).default(1), // LinkedIn post searches a day
+    LI_POSTS_PER_TOPIC: z.coerce.number().int().min(1).max(50).default(5),
+    LI_COMMENTS_PER_POST: z.coerce.number().int().min(0).max(20).default(5),
   })
   .parse(process.env);
 
@@ -45,6 +48,9 @@ const deps: Deps = {
     rotationEnabled: env.ROTATION_ENABLED === "true",
     boardSlotsPerDay: env.BOARD_SLOTS_PER_DAY,
     boardPostsPerSlot: env.BOARD_POSTS_PER_SLOT,
+    socialSlotsPerDay: env.SOCIAL_SLOTS_PER_DAY,
+    liPostsPerTopic: env.LI_POSTS_PER_TOPIC,
+    liCommentsPerPost: env.LI_COMMENTS_PER_POST,
   },
   now: () => new Date(),
   log,
@@ -66,10 +72,11 @@ const queues: QueueDef<any>[] = [
   { name: Q.apifyRunEvent, concurrency: 1, expireInSeconds: 120, schema: ApifyRunEvent, run: onApifyRunEvent },
   { name: Q.fetchDataset, concurrency: 1, expireInSeconds: 300, schema: FetchDataset, run: fetchDataset },
   { name: Q.extractLlm, concurrency: 2, expireInSeconds: 180, schema: ExtractLlm, run: extractLlm },
-  // Social digest, LinkedIn half (§4.1a): started by Run now; completion arrives through poll-runs.
-  { name: Q.startSocialRun, concurrency: 1, expireInSeconds: 120, schema: StartSocialRun, run: startSocialRun },
-  { name: Q.fetchSocial, concurrency: 1, expireInSeconds: 300, schema: FetchSocial, run: fetchSocial },
-  { name: Q.extractSocial, concurrency: 2, expireInSeconds: 180, schema: ExtractSocial, run: extractSocial },
+  // LinkedIn post search (§4.1d): Run now and the rotation's social slot; completion through poll-runs.
+  { name: Q.startLiRun, concurrency: 1, expireInSeconds: 120, schema: StartLiRun, run: startLiRun },
+  { name: Q.fetchLiRun, concurrency: 1, expireInSeconds: 300, schema: FetchLiRun, run: fetchLiRun },
+  { name: Q.readLiPost, concurrency: 2, expireInSeconds: 180, schema: ReadLiPost, run: readLiPost },
+  { name: Q.cardLiPost, concurrency: 2, expireInSeconds: 180, schema: CardLiPost, run: cardLiPost },
   // One batch a day, so the day's best-scoring posts get the search quota (§5.1 step 5c).
   { name: Q.resolveBatch, concurrency: 1, expireInSeconds: 900, schema: z.unknown(), run: (d) => resolveBatch(d) },
   // Free (plain HTTP) and automatic (§4.2): pending seeds every 10 min, 4 sites at a time.
@@ -126,6 +133,8 @@ async function main() {
   // get the search quota (§5.1 step 5c).
   // await boss.schedule(Q.ingestRotation, "0 2 * * *");
   await boss.unschedule(Q.ingestRotation).catch(() => {}); // drop the schedule an earlier start registered
+  // Search arms (§4.1c): the code's searches, links for runs from before the bandit, retirements.
+  log("search arms synced", await syncSearchArms(deps));
   log("worker started", { queues: queues.map((q) => q.name) });
 }
 

@@ -203,7 +203,7 @@ Slots: India 15, UAE 15, US 15 = 45. The market marks are a starting point; a sl
 near-zero pass rate after two cycles is switched off and shown on `/radar`.
 `companies.vertical` and `ingestion_runs.vertical` store the vertical's slug.
 
-### 4.1c Learning loop: what to search (agreed 2026-11-07, not built)
+### 4.1c Learning loop: what to search (agreed 2026-11-07; step 2 built)
 
 Apify money is spent when a post is fetched, so the system learns **which searches to run**, not
 only which fetched posts to drop. It replaces the fixed yield thresholds of the rotation (§4.1b)
@@ -217,22 +217,103 @@ once built. Decisions from the operator design session (Q1–Q17):
 | Automation | Searches adjust themselves (cheap, reversible, budget-capped). Keyword and AI-instruction changes are **proposed for operator approval**, because they can silently lower recall (§6.3) |
 | Proposals | Checked **after every run** (not weekly). Proposed only when the evidence is strong: e.g. a keyword in ≥ 5 operator rejects or AI drops and in 0 Sent cards. Each proposal shows its evidence ("in 6 rejects, 0 sent", examples). Listed on the Sources page under **"N changes to review"** (also a badge on the inbox's Sources link), with Approve / Reject |
 | Rejected proposal | Not proposed again until its evidence doubles (6 → 12 rejects). The operator's reason is stored and later proposals are checked against it. Approvals and rejections both feed the loop |
-| Algorithm | **Thompson-sampling bandit.** Arms: job posts = vertical × market × title; social = vertical × market × topic (4 topics per run; a card is credited to the topic its snippet names) |
+| Algorithm | **Thompson-sampling bandit.** Arms: job posts = vertical × market × title; social = vertical × topic, run as LinkedIn post search (§4.1d; no market filter, so market "all"; 2 topics per run; a card is credited to the topic its evidence names) |
 | Reward per run | Cards per dollar, minus cards rejected as `not_real_pain` or `wrong_company` (rejections for `too_small` / `already_client` do not count against the search). Older runs fade with a **30-day half-life** |
 | New searches | Titles/topics learned from cards marked Sent, plus weekly AI suggestions; each new arm gets one probe run from a **20 % exploration** share |
-| Budget | ≥ 50 % of runs on High/Medium-tier arms, the bandit choosing within each group. Daily rotation: **3 job-post searches (35 posts) + 1 social search (3 pages)**, ≈ $0.05–0.08/day, ≈ $2–2.50/month, inside the existing caps |
+| Budget | ≥ 75 % of runs on High/Medium-tier arms (2a), the bandit choosing within each group. Daily rotation: **3 job-post searches (35 posts) + 1 LinkedIn post search (2 topics × 5 posts × 5 comments, ≤ $0.12)**, ≈ $0.13–0.15/day, ≈ $4/month of Apify, inside the $4.50 cycle cap |
 | Retiring | Automatic after **5 runs with 0 cards**; shown as Retired with one-click Revive |
 | Learned score | After ≈ 100 verdicts (≥ 30 Sent): a logistic-regression model over card features (tier, source, automation %, size…) runs in shadow beside the hand formula (§7), then is proposed to the operator |
 | Visibility | A **Searches** table on the Sources page (runs, cards per $, Trying / Strong / Weak / Retired, Revive), beside the **changes to review** list |
 
+**Built 2026-11-07 (step 2):** `packages/core/src/bandit.ts` (pure: seed arms, Gamma posterior with
+a per-kind prior = the pooled rate so far, Thompson draws, 20 % exploration of untried arms, the
+High/Medium floor, retirement), migration 0011 (`search_arms`, `run_arms`, `challenges.run_id`;
+the operator may only revive), `packages/db/src/arms.ts` (batched seeding of ≈ 1,050 arms, run
+links, back-fill of earlier runs, `retireDeadArms`, `armHistory`). Every run, manual or rotation,
+links to its arms; a social run's cost splits across its topics and each card goes to the topic its
+evidence names. `ingest-rotation` now plans with `planDay` (3 job + 1 social, `SOCIAL_SLOTS_PER_DAY`;
+since 2026-11-08 the social slot is a LinkedIn post search, `LI_POSTS_PER_TOPIC`,
+`LI_COMMENTS_PER_POST`) and is still off. The Sources page has the Searches table (status, runs,
+cards, cost, observed cards per $, Revive) and Run now's job form is pre-filled with the bandit's
+pick. The old fixed-threshold planner (`rotation.ts`) is removed. Not yet: new arms learned from
+Sent cards and weekly AI suggestions (Q7), which come with the proposals step.
+
 **Build order:**
 1. Fixer titles in the job-post searches, and "solved" social posts (§1.1 gaps 1–2), so High-tier arms exist.
 2. The bandit plus the Searches table.
+2a. **Budget away from Low (agreed 2026-11-07).** 65 of the first 66 cards were Low, mostly from
+   desk-title searches whose posts the tier rules (§1.1) always rate Low, so better scoring cannot
+   lift them. Instead the reward counts a Low card as **0.25** of a High/Medium card, and the
+   High/Medium floor rises from 50 % to **75 %** of the day's runs (2 of 3 job searches on fixer
+   titles, plus the social run). Free; one desk-title search a day keeps Low covered.
+2b. **Company-check agent (agreed 2026-11-07),** replacing the single resolve call (§5.1 step 5c):
+   see §5.1a.
 3. Switch the daily rotation on.
 4. Proposals after each run, with Approve / Reject.
 5. The learned score, once the verdict threshold is met.
 
+Feasibility notes (2026-11-07, from the spend log: 529 AI reads at ≈ $0.0018, 4 searched resolves
+at ≈ $0.006): an agent that scores every post would cost ≈ $0.02 a post (10×) for little gain,
+since judging one post is one step; scoring stays a single AI read, and learning stays in the
+bandit, the proposals and the learned score. Zero Low cards is not a goal: a share is honest.
+
+### 4.1d LinkedIn post search with comments and contacts (agreed and built 2026-11-08)
+
+**Operator decision, 2026-11-08:** this source searches LinkedIn itself and keeps people's names.
+It changes two earlier rules for this source only: §4.1a's "never fetch LinkedIn pages" (the
+Google digest still follows it) and "no author names stored". What is kept, for authors and
+commenters: **name, headline, profile link, and the company read from the headline**. No profile
+visits and no email lookups; an email is kept only when someone typed it into a post, comment or
+headline. Kept **60 days**, then purged (poll-runs).
+
+- **Actor:** `harvestapi/linkedin-post-search` (≈ 42k users, 4.95★). Verified 2026-11-08 from the
+  actor's API: every post and every comment is one **$0.002** event on the free plan (a query with
+  no results $0.001, start $0.00005). Input: the topic as a quoted phrase, `postedLimit: month`
+  (the worker re-checks 21 days), `maxPosts`, `scrapeComments`, `maxComments`. Comments arrive as
+  their own items with `postId`; each carries the commenter's name, headline (`position`), profile
+  link, person or company, and whether it is the post's author.
+- **Test run** (1 topic "freight invoices", 5 posts, up to 5 comments each): 5 posts and 12
+  comments, ≈ $0.034. Full text and headlines arrived; no emails; many authors and commenters were
+  vendors, so the AI filter matters.
+- **AI read:** one call per post with up to 20 comments (`buildLiRead`): has_pain, up to 3 pains
+  (stated or implied), author role and stance, author company from the headline, and per comment
+  whether it shares the pain, its critical point in under 20 words, and the commenter's company.
+  Measured ≈ $0.0004 a post. Hidden reasoning is switched off for every AI call (it truncated the
+  JSON: 385 of 480 output tokens spent reasoning on 2026-11-08).
+- **Cost per run:** Apify (posts × (1 + comments per post)) × $0.002 at most, plus ≈ $0.001 a post of AI;
+  e.g. 10 posts × 10 comments ≤ $0.22 + $0.01. The run is reserved and capped like every Apify run.
+- **Commenter pain score (operator's ranking, 2026-11-08):** the AI only labels each comment
+  (urgency: none / nuisance / recurring / blocking; and four depth signals); `commentPainScore`
+  turns labels into numbers so a rank can be explained. Urgency % = 0 / 35 / 70 / 100. Depth % =
+  own experience 35 + specifics 25 (also any number in the text) + how they handle it today 25 +
+  the impact 15. **Score = 60 % urgency + 40 % depth**, capped at 30 when the comment does not
+  share the pain. First real run: the two commenters describing their own pain scored 72, the rest
+  0–10.
+- **UI (`/linkedin`):** a run form (vertical, topic, posts, comments per post, cost shown), the runs,
+  and three tabs for a run: **Search** (every post found); **Posts**, a three-column board (posts
+  with pain first | the selected post | its author and commenters); **Contacts**, a five-column
+  kanban (posts in two lines | the full post | post authors with and without pain | the post's
+  commenters ranked by pain score | the chosen commenter's comments with the score's breakdown).
+  Every column scrolls on its own.
+- **Inbox cards and the bandit (agreed and built 2026-11-08); the Google digest retired.** The read
+  also returns `author_country` (in / ae / us / other / unknown, from clear clues only: the actor
+  has no location filter). `liCardGate` keeps a post with pain, by the business's own people
+  (founder, employee, company page) whose stance is suffering, implied or solved, with the company
+  named and in one of our markets; `li_posts.card_outcome` records the verdict or why not
+  (`not_own`, `no_company`, `no_market`, `duplicate`, `no_fit`, `too_large`, `ai_error`). A kept post
+  goes to `card-li-post`: one more AI call (`buildLiCardExtraction`, the job-post rules plus the
+  read's author verdict as known) fills the card, then the job-post path (fit → size → company check
+  → card) with the full post as evidence. A post already carded costs no second call. Every run,
+  Run now or rotation, links to one Medium arm per topic (vertical × topic, market "all"), so the
+  bandit learns from LinkedIn search; `llm_persisted_count` counts cards, not pain posts
+  (corrected for earlier runs, migration 0017). The Google digest's 900 per-market topic arms
+  retired with their history (migration 0016); its Run now, queues and prompt are removed, and its
+  stored results age out (21 days). Commenters do not become cards yet.
+
 ### 4.1a Company posts (LinkedIn, Reddit)
+
+> **Retired 2026-11-08 for LinkedIn:** the Google digest below is replaced by LinkedIn post search
+> (§4.1d), which reads the full post and its comments. Kept here as the record of what it did.
 
 - **LinkedIn:** Apify Google Search queries `site:linkedin.com/posts` combined with
   first-person pain phrases per vertical ("we still", "our team spends", "I spend half my
@@ -374,6 +455,28 @@ the next 100 pending seeds — used for testing and catching up.
 
 Company posts (§4.1a) follow the same steps 2–8 with `gate-post` in place of
 `gate-job-post`: **≥ 1 pain atom** (snippets are ~150 characters), no desk-role check.
+
+### 5.1a Company-check agent (agreed 2026-11-07, replaces the single resolve call in step 5c)
+
+The one-shot search in step 5c is replaced by a small agent, because the next step depends on what
+the last one found (a directory hit, a similar name, a site with no city). Same queue, same order
+(best provisional score first), same `SEARCH_DAILY_CAP`, now counted per company checked.
+
+- **Goal:** find the company's own website, and check it is the kind of company we sell to:
+  small or mid-size, in the card's vertical, in the card's place.
+- **Steps:** each step is one AI call (`MODEL_EXTRACTION`) that writes short notes and picks the
+  next action: `search` (the next call runs with web search on a query it writes), `open` (the
+  worker fetches the page with the guarded fetch, §5.4, and passes the first 4,000 characters of
+  text), or `finish`. The first step searches `"<company>" <city> <country> official website`.
+- **Limits:** at most **6 steps** and **$0.05** per company; at either limit it finishes with what it
+  knows. Expected ≈ $0.02–0.05 per company, ≈ $1–3/month at today's volume.
+- **Finish:** domain, size band (1–10, 11–50, 51–200, 200+, or unknown) with the URL that shows
+  it, vertical and place match, and a one-line summary.
+- **Acceptance (unchanged in spirit):** the domain must be one a search cited or a page the agent
+  opened, never a directory, else it is a miss; the free homepage check still runs on cited
+  candidates.
+- **Effect:** the finding is stored on the company (`company_check`) and shown on the card. It
+  never drops a card; a "looks 200+" finding is shown for the operator to judge.
 
 ### 5.2 pg-boss queues
 

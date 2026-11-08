@@ -1,6 +1,6 @@
 // Triage inbox (PRD §10.1, Q67): queues + filters | ranked list | dossier.
 import Link from "next/link";
-import { ArrowLeft, ArrowSquareOut, ChartBar, Files, Fire, Flask, GlobeSimpleX, Info, Robot, Warning, X } from "@phosphor-icons/react/ssr";
+import { ArrowLeft, ArrowSquareOut, ChartBar, Files, Fire, Flask, GlobeSimpleX, Info, MagnifyingGlass, Robot, Warning, X } from "@phosphor-icons/react/ssr";
 import { type ScoreBreakdown, type SourceFamily, type StructuredIntelligence, boardColumn, sourceFamily } from "@bs/core";
 import { ActionBar } from "@/components/ActionBar.tsx";
 import { FamilyIcon } from "@/components/FamilyIcon.tsx";
@@ -10,7 +10,7 @@ import { Facts, Meta } from "@/components/Meta.tsx";
 import { RowLink } from "@/components/RowLink.tsx";
 import { ThemeToggle } from "@/components/ThemeToggle.tsx";
 import { WebsiteAudit } from "@/components/WebsiteAudit.tsx";
-import { type Company, type Row, type View, QUEUES, loadInbox, parseView, viewHref } from "@/lib/inbox.ts";
+import { type Company, type CompanyCheckView, type Row, type View, QUEUES, loadInbox, parseView, viewHref } from "@/lib/inbox.ts";
 import {
   FAMILY_LABEL,
   PRODUCT_LABEL,
@@ -67,6 +67,9 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
         <Link href="/radar" className="queue sources-link">
           <span>Sources</span>
           <span className="queue-count">Run now</span>
+        </Link>
+        <Link href="/linkedin" className="queue">
+          <span>LinkedIn search</span>
         </Link>
 
         <div className="filters" role="group" aria-label="Filters">
@@ -327,6 +330,8 @@ function Dossier({ company: c, view, nextHref, selfHref }: { company: Company; v
             </section>
           )}
 
+          {c.company_check && <CompanyCheckCard check={c.company_check} />}
+
           {b && best && <ScoreWhy breakdown={b} si={si} total={c.priority_score} source={SOURCE_LABEL[best.source_type]} />}
 
           <section className="section" aria-labelledby="evidence">
@@ -389,6 +394,47 @@ function Dossier({ company: c, view, nextHref, selfHref }: { company: Company; v
       </div>
       <ActionBar id={c.id} domain={displayName(c)} status={c.status} nextHref={nextHref} selfHref={selfHref} />
     </>
+  );
+}
+
+const MATCH_LABEL = { yes: "Yes", no: "No", unsure: "Not sure" } as const;
+const SIZE_BAND_LABEL = { "1-10": "1 to 10 people", "11-50": "11 to 50 people", "51-200": "51 to 200 people", "200+": "Over 200 people", unknown: "Not found" } as const;
+
+// What the company-check agent found (PRD §5.1a). It never drops a card; a mismatch is for the operator to judge.
+function CompanyCheckCard({ check }: { check: CompanyCheckView }) {
+  const off = check.sizeBand === "200+" || check.verticalMatch === "no" || check.placeMatch === "no";
+  const evidence = check.sizeEvidenceUrl && /^https?:\/\//i.test(check.sizeEvidenceUrl) ? check.sizeEvidenceUrl : null;
+  return (
+    <section className={`card check${off ? " check-off" : ""}`} aria-labelledby="check">
+      <h3 id="check">
+        <MagnifyingGlass size={15} aria-hidden /> Company check
+      </h3>
+      {check.summary && <p>{check.summary}</p>}
+      <dl className="stats">
+        <Stat
+          label="Size"
+          value={
+            evidence ? (
+              <a href={evidence} target="_blank" rel="noopener noreferrer">
+                {SIZE_BAND_LABEL[check.sizeBand]}
+                <span className="sr-only"> (source, opens in a new tab)</span>
+              </a>
+            ) : (
+              SIZE_BAND_LABEL[check.sizeBand]
+            )
+          }
+          className={check.sizeBand === "200+" ? "match-no" : undefined}
+        />
+        <Stat label="In this vertical" value={MATCH_LABEL[check.verticalMatch]} className={`match-${check.verticalMatch}`} />
+        <Stat label="In this place" value={MATCH_LABEL[check.placeMatch]} className={`match-${check.placeMatch}`} />
+      </dl>
+      {off && (
+        <p className="check-warn">
+          <Warning size={14} aria-hidden /> This may not be the right kind of company. Check before reaching out.
+        </p>
+      )}
+      <Meta className="d-sub" items={[`Checked by AI in ${check.steps} ${check.steps === 1 ? "step" : "steps"}`, `$${check.costUsd.toFixed(3)}`]} />
+    </section>
   );
 }
 

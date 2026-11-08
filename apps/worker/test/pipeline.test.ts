@@ -3,33 +3,32 @@
 import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type pg from "pg";
-import { type LlmClient, type StructuredIntelligence, Q, SOCIAL_TOPICS, apifyCycleKey, auditSite, parseHtml } from "@bs/core";
+import { type LlmClient, type StructuredIntelligence, Q, apifyCycleKey, auditSite, parseHtml } from "@bs/core";
 import { claimSeeds, createPool } from "@bs/db";
 import type { ApifyRun, SniffResult } from "@bs/integrations";
 import {
   type Deps,
   type Send,
+  cardLiPost,
   extractLlm,
-  extractSocial,
   fetchDataset,
-  fetchSocial,
+  fetchLiRun,
   ingestRotation,
+  readLiPost,
+  startLiRun,
+  syncSearchArms,
   onApifyRunEvent,
   resolveBatch,
   sniffDomain,
   startBoardRun,
-  startSocialRun,
 } from "../src/jobs.ts";
 
 const items = JSON.parse(readFileSync(new URL("../../../packages/integrations/test/fixtures/indeed-items.json", import.meta.url), "utf8"));
 const NOW = new Date("2026-11-03T12:00:00Z");
 const CYCLE = new Date("2000-01-16T00:00:00Z"); // test-only cycle key, never a real one
 const ROTATION_DAY = new Date("2000-01-02T02:00:00Z"); // test-only rotation day
-// LinkedIn post URLs carry their time in the activity id (id >> 22 = Unix ms).
+// LinkedIn post ids carry their time (id >> 22 = Unix ms).
 const act = (d: Date) => (BigInt(d.getTime()) << 22n).toString();
-const SOCIAL_FRESH = `https://www.linkedin.com/posts/social-test-co_we-still-key-activity-${act(new Date(NOW.getTime() - 2 * 86_400_000))}-Ab1`;
-const SOCIAL_VENDOR = `https://www.linkedin.com/posts/vendor-x_automate-activity-${act(new Date(NOW.getTime() - 3 * 86_400_000))}-Ab2`;
-const SOCIAL_OLD = `https://www.linkedin.com/posts/old-co_spreadsheets-activity-${act(new Date(NOW.getTime() - 40 * 86_400_000))}-Ab3`;
 const RUN_ID = "testRunFixture01";
 const DOMAIN = "acme-freight.example";
 const R_DOMAIN = "resolve-test.example"; // resolve-path test company
@@ -56,11 +55,11 @@ const si: StructuredIntelligence = {
 
 function fakes(
   pool: pg.Pool,
-  over: { usageUsd?: number; capUsd?: number; searchCap?: number; resolveTo?: { domain: string | null; cited: string[]; confidence?: "high" | "low" }; pages?: Record<string, string>;
+  over: { usageUsd?: number; capUsd?: number; searchCap?: number; resolveTo?: { domain: string | null; cited: string[] }; pages?: Record<string, string>;
     ages?: Record<string, Date | null | "error">;
     sniffs?: Record<string, SniffResult>;
     lagging?: boolean; rotation?: boolean; now?: Date;
-    socialPages?: object[]; social?: Record<string, unknown> } = {},
+    dataset?: object[]; liCard?: Record<string, unknown>; liRead?: (user: string) => object } = {},
 ) {
   const sent: { queue: string; data: any; opts?: object }[] = [];
   const started: object[] = [];
@@ -76,9 +75,12 @@ function fakes(
     worstCaseUsd: async () => 0.001,
     json: async (task, req) =>
       task === "resolve"
-        ? { data: req.parse({ domain: over.resolveTo?.domain ?? null, confidence: over.resolveTo?.confidence ?? "high" }) as any, model: "fake/model", costUsd: 0, citations: over.resolveTo?.cited ?? [] }
-        : req.schemaName === "social_extraction"
-          ? { data: req.parse({ ...si, ...over.social }) as any, model: "fake/model", costUsd: 0 }
+        ? // The company-check agent (§5.1a), finishing on its first step.
+          { data: req.parse({ notes: "fake", action: "finish", query: null, url: null, domain: over.resolveTo?.domain ?? null, size_band: "11-50", size_evidence_url: null, vertical_match: "yes", place_match: "yes", summary: "A test company." }) as any, model: "fake/model", costUsd: 0.002, citations: over.resolveTo?.cited ?? [] }
+        : req.schemaName === "linkedin_read"
+          ? { data: req.parse(over.liRead!(req.user)) as any, model: "fake/model", costUsd: 0.0004 }
+        : req.schemaName === "linkedin_card"
+          ? { data: req.parse({ ...si, vertical: "logistics", ...over.liCard }) as any, model: "fake/model", costUsd: 0 }
           : req.schemaName === "seed_extraction" // a run with no vertical asks for it
             ? { data: req.parse({ ...si, vertical: "construction" }) as any, model: "fake/model", costUsd: 0 }
             : { data: req.parse(si) as any, model: "fake/model", costUsd: 0 },
@@ -91,8 +93,8 @@ function fakes(
       usage: async () => ({ cycleStart: CYCLE, cycleEnd: CYCLE, usageUsd: over.usageUsd ?? 0, limitUsd: 5 }),
       startRun: async (_a, input) => (started.push(input), { ...run, status: "READY" }),
       getRun: async () => run,
-      datasetItems: async (_id, offset) => (offset === 0 ? (over.socialPages ?? items) : []) as any,
-      datasetItemCount: async () => (over.socialPages ?? items).length,
+      datasetItems: async (_id, offset) => (offset === 0 ? (over.dataset ?? items) : []) as any,
+      datasetItemCount: async () => (over.dataset ?? items).length,
     },
     llm,
     fetchPage: async (url) => (over.pages?.[url] ? { url, status: 200, html: over.pages[url]!, headers: {} } : null),
@@ -112,6 +114,9 @@ function fakes(
       rotationEnabled: over.rotation ?? false,
       boardSlotsPerDay: 3,
       boardPostsPerSlot: 35,
+      socialSlotsPerDay: 1,
+      liPostsPerTopic: 5,
+      liCommentsPerPost: 5,
     },
     now: () => over.now ?? NOW,
     log: () => {},
@@ -141,10 +146,11 @@ async function cleanup(pool: pg.Pool) {
   await pool.query("delete from domain_cache where domain like 'sniff-test%.example'");
   await pool.query("delete from ingestion_runs where job_key = 'test-sniff-run'");
   await pool.query("delete from rotation_days where day = $1", [ROTATION_DAY.toISOString().slice(0, 10)]);
-  await pool.query("delete from companies where name_key like 'us:social test%'");
-  await pool.query("delete from resolve_queue where natural_id like 'post:linkedin:%' and payload::text like '%Social Test Co%'");
-  await pool.query("delete from seen_items where natural_id = any($1)", [[SOCIAL_FRESH, SOCIAL_VENDOR, SOCIAL_OLD].map((u) => `post:linkedin:${u.match(/activity-(\d{19})/)![1]}`)]);
-  await pool.query("delete from domain_cache where key like 'social test co%'");
+  await pool.query("delete from companies where name_key like 'us:li test freight%'");
+  await pool.query("delete from resolve_queue where natural_id like 'post:linkedin:%' and payload::text like '%Li Test Freight%'");
+  await pool.query("delete from domain_cache where key like 'li test freight%'");
+  // Arms the tests' runs created (typed titles), once their runs are gone.
+  await pool.query("delete from search_arms a where a.source = 'manual' and not exists (select 1 from run_arms ra where ra.run_id is not null and ra.arm_id = a.id)");
 }
 
 // Remote database (~100 ms per round trip), so generous timeouts.
@@ -220,96 +226,156 @@ describe.skipIf(!process.env.DATABASE_URL)("worker pipeline (database)", { timeo
     await pool.query("delete from spend_events where ref = $1", [RUN_ID]);
   });
 
-  it("Social digest: LinkedIn search → fresh posts only → author check → card without the author's name (§4.1a)", async () => {
+  it("LinkedIn post search: posts and comments saved, fresh posts read, sharers marked, contacts kept, own pain posts carded (§4.1d)", async () => {
     await pool.query("delete from ingestion_runs where apify_run_id = $1", [RUN_ID]);
-    const socialPages = [
-      {
-        organicResults: [
-          { url: SOCIAL_FRESH, title: "Jane Doe's Post", description: "At Social Test Co we still do all our invoice data entry by hand, every single day." },
-          { url: SOCIAL_VENDOR, title: "Vendor X", description: "Still doing data entry manually? Book a demo." },
-          { url: SOCIAL_OLD, title: "Old post", description: "Our data entry is manual." },
-          { url: "https://www.linkedin.com/in/jane-doe", title: "Jane Doe", description: "profile, not a post with data entry" },
-        ],
-      },
+    const P1 = act(new Date(NOW.getTime() - 2 * 86_400_000)); // fresh, with comments
+    const P2 = act(new Date(NOW.getTime() - 3 * 86_400_000)); // fresh, no pain
+    const P3 = act(new Date(NOW.getTime() - 40 * 86_400_000)); // too old
+    const P4 = act(new Date(NOW.getTime() - 4 * 86_400_000)); // pain, but a vendor selling
+    const P5 = act(new Date(NOW.getTime() - 5 * 86_400_000)); // pain at their own business, outside our markets
+    const post = (id: string, content: string) => ({
+      type: "post", id, linkedinUrl: `https://www.linkedin.com/posts/li-test_x-activity-${id}-Ab1`, content,
+      author: { type: "profile", name: "Li Test Author", info: "Operations Manager at Li Test Freight | ops@litest.example", linkedinUrl: "https://www.linkedin.com/in/li-test-author" },
+      postedAt: { timestamp: Number(BigInt(id) >> 22n) }, engagement: { likes: 4, comments: 2, shares: 0 },
+    });
+    const comment = (id: string, postId: string, commentary: string, author = false) => ({
+      type: "comment", id, postId, commentary, createdAt: NOW.toISOString(),
+      actor: { type: "profile", name: `Commenter ${id.slice(-2)}`, position: "AP Lead at Li Test Beta", linkedinUrl: `https://www.linkedin.com/in/c-${id.slice(-2)}`, author },
+      engagement: { likes: Number(id.slice(-1)) },
+    });
+    const liItems = [
+      post(P1, "We still check every freight invoice by hand."),
+      post(P2, "Great quarter, thanks team."),
+      post(P3, "Old post."),
+      post(P4, "Still checking invoices manually? Book a demo of our tool."),
+      post(P5, "Our London office keys every invoice manually."),
+      comment("7600000000000000001", P1, "Same here, a week a month on this."),
+      comment("7600000000000000002", P1, "Great post!"),
+      comment("7600000000000000003", P1, "Thanks all", true), // the author replying: not a contact, not read
     ];
-    const { deps, sent, started } = fakes(pool, { socialPages, social: { author_relation: "founder_owner", stance: "suffering", company_name: "Social Test Co", vertical: "logistics" } });
-    expect(await startSocialRun(deps, { vertical: "logistics", keyword: null, country: "us", pages: 1 }, "test-social-key")).toEqual({ started: RUN_ID });
-    expect(await startSocialRun(deps, { vertical: "logistics", keyword: null, country: "us", pages: 1 }, "test-social-key")).toEqual({ started: RUN_ID }); // retry: no second run
-    expect(started).toHaveLength(1);
-    expect(started[0]).toMatchObject({ quickDateRange: "d21", maxPagesPerQuery: 1, countryCode: "us" });
-    expect(String((started[0] as { queries: string }).queries)).toContain("site:linkedin.com/posts");
-    // Topic search: the vertical's topics in rotation (where it is depends on earlier runs).
-    expect(SOCIAL_TOPICS.logistics.some((t) => String((started[0] as { queries: string }).queries).includes(`"${t}"`))).toBe(true);
+    // The fake AI answers by what the prompt holds; comments come in likes order (c1 = …02, c2 = …01).
+    const noPain = { urgency: "none", own_experience: false, specifics: false, current_process: false, consequence: false };
+    const weekly = { urgency: "recurring", own_experience: true, specifics: false, current_process: false, consequence: false };
+    const liRead = (user: string) =>
+      user.includes("Book a demo")
+        ? { has_pain: true, pains: ["Invoices checked manually"], author_relation: "vendor", stance: "selling", author_company: "Li Test Vendor", author_country: "us", comments: [] }
+      : user.includes("London")
+        ? { has_pain: true, pains: ["Invoices keyed manually"], author_relation: "employee", stance: "suffering", author_company: "Li Test Freight", author_country: "other", comments: [] }
+      : user.includes("by hand")
+        ? {
+            has_pain: true, pains: ["Freight invoices checked by hand"], author_relation: "employee", stance: "suffering", author_company: "Li Test Freight", author_country: "us",
+            comments: [
+              { ref: "c1", resonates: false, gist: "Praise", company: "Li Test Beta", ...noPain },
+              { ref: "c2", resonates: true, gist: "Spends a week a month checking invoices", company: "Li Test Beta", ...weekly },
+              { ref: "c9", resonates: true, gist: "not in the prompt", company: null, ...weekly },
+            ],
+          }
+        : { has_pain: false, pains: ["ignored when no pain"], author_relation: "employee", stance: "commenting", author_company: null, author_country: "unknown", comments: [] };
+    const { deps, sent, started } = fakes(pool, { dataset: liItems, liRead });
+    const job = { vertical: "logistics" as const, topics: ["freight invoices"], posts: 5, comments: 10 };
+    expect(await startLiRun(deps, job, "test-li-key")).toEqual({ started: RUN_ID });
+    expect(await startLiRun(deps, job, "test-li-key")).toEqual({ started: RUN_ID }); // retry: no second run
+    expect(started).toEqual([expect.objectContaining({ searchQueries: ['"freight invoices"'], maxPosts: 5, maxComments: 10, scrapeComments: true })]);
     // Completion is checked 20 s after the start, not at the next 5-minute poll.
     expect(sent.find((s) => s.queue === Q.apifyRunEvent)).toMatchObject({ data: { apifyRunId: RUN_ID, recheck: 30 }, opts: { startAfter: 20 } });
 
     // Seconds after the run ends its dataset can still read empty: look again before settling.
-    const early = fakes(pool, { socialPages: [] });
+    const early = fakes(pool, { dataset: [] });
     expect(await onApifyRunEvent(early.deps, { apifyRunId: RUN_ID, recheck: 30 })).toBe("waiting for final counts");
     expect(early.sent).toEqual([{ queue: Q.apifyRunEvent, data: { apifyRunId: RUN_ID, recheck: 3 }, opts: { startAfter: 10 } }]);
     expect(await onApifyRunEvent(deps, { apifyRunId: RUN_ID })).toBe("SUCCEEDED");
-    const fetchJob = sent.find((s) => s.queue === Q.fetchSocial)!;
-    expect(fetchJob).toBeDefined();
-    const counts = await fetchSocial(deps, fetchJob.data);
-    // profile → not a post; 40-day-old post → stale; fresh + vendor pass the free gate.
-    expect(counts).toMatchObject({ raw_items_ingested: 4, dropped_stale_count: 1, dropped_trie_count: 1 });
-    const extracts = sent.filter((s) => s.queue === Q.extractSocial);
-    expect(extracts).toHaveLength(2);
+    const runRow = (await pool.query("select id, job_type, query_title from ingestion_runs where apify_run_id = $1", [RUN_ID])).rows[0];
+    expect(runRow).toMatchObject({ job_type: "li_posts", query_title: "freight invoices" });
+    // The run is linked to its topic's arm, so the bandit learns from it (§4.1c).
+    const arms = (await pool.query("select a.kind, a.country, a.term, a.grp from run_arms ra join search_arms a on a.id = ra.arm_id where ra.run_id = $1", [runRow.id])).rows;
+    expect(arms).toEqual([{ kind: "social", country: "all", term: "freight invoices", grp: "medium" }]);
+    // 8 items × $0.002 + the start: every post and comment is one event.
+    const spent = Number((await pool.query("select sum(cost_usd) s from spend_events where run_id = $1", [runRow.id])).rows[0].s);
+    expect(spent).toBeCloseTo(8 * 0.002 + 0.00005, 6);
 
-    // The vendor post: the LLM says vendor/selling → dropped.
-    const vendor = extracts.find((e) => e.data.url === SOCIAL_VENDOR)!;
-    const v = fakes(pool, { social: { author_relation: "vendor", stance: "selling", company_name: null, vertical: null } });
-    expect(await extractSocial(v.deps, vendor.data)).toMatch(/dropped/);
+    const counts = await fetchLiRun(deps, sent.find((x) => x.queue === Q.fetchLiRun)!.data);
+    expect(counts).toMatchObject({ raw_items_ingested: 5, dropped_stale_count: 1, dropped_trie_count: 0 });
+    const reads = sent.filter((x) => x.queue === Q.readLiPost);
+    expect(reads).toHaveLength(4);
+    for (const r of reads) await readLiPost(deps, r.data);
+    expect(await readLiPost(deps, reads[0]!.data)).toBe("already read");
 
-    const fresh = extracts.find((e) => e.data.url === SOCIAL_FRESH)!;
-    expect(await extractSocial(deps, fresh.data)).toMatch(/^persisted/);
+    const posts = (await pool.query("select post_id, status, has_pain, pains, author_company, author_country, card_outcome, emails from li_posts where run_id = $1", [runRow.id])).rows;
+    const byId = Object.fromEntries(posts.map(({ post_id, ...p }) => [post_id, p]));
+    expect(byId).toEqual({
+      [P1]: { status: "read", has_pain: true, pains: ["Freight invoices checked by hand"], author_company: "Li Test Freight", author_country: "us", card_outcome: "checking", emails: ["ops@litest.example"] },
+      [P2]: { status: "read", has_pain: false, pains: [], author_company: null, author_country: "unknown", card_outcome: "no_pain", emails: ["ops@litest.example"] },
+      [P4]: { status: "read", has_pain: true, pains: ["Invoices checked manually"], author_company: "Li Test Vendor", author_country: "us", card_outcome: "not_own", emails: ["ops@litest.example"] },
+      [P5]: { status: "read", has_pain: true, pains: ["Invoices keyed manually"], author_company: "Li Test Freight", author_country: "other", card_outcome: "no_market", emails: ["ops@litest.example"] },
+    });
+    const comments = (await pool.query(
+      "select k.comment_id, k.is_author, k.resonates, k.gist, k.company, k.pain_score, k.signals from li_comments k join li_posts p on p.id = k.li_post_id where p.run_id = $1 order by k.comment_id",
+      [runRow.id],
+    )).rows;
+    expect(comments).toEqual([
+      // recurring 70 × 0.6 + own experience 35 × 0.4 = 56; praise scores 0.
+      { comment_id: "7600000000000000001", is_author: false, resonates: true, gist: "Spends a week a month checking invoices", company: "Li Test Beta", pain_score: 56, signals: ["own_experience"] },
+      { comment_id: "7600000000000000002", is_author: false, resonates: false, gist: "Praise", company: "Li Test Beta", pain_score: 0, signals: [] },
+      { comment_id: "7600000000000000003", is_author: true, resonates: null, gist: null, company: null, pain_score: null, signals: [] },
+    ]);
+    // Only the own-business pain post in our markets goes on to a card.
+    const cards = sent.filter((x) => x.queue === Q.cardLiPost);
+    expect(cards).toHaveLength(1);
+    expect((await pool.query("select llm_persisted_count p from ingestion_runs where id = $1", [runRow.id])).rows[0].p).toBe(0); // a pain post is not a card
+    expect(await cardLiPost(deps, cards[0]!.data)).toMatch(/^persisted/);
+    expect(await cardLiPost(deps, cards[0]!.data)).toBe("already decided");
     const ch = (
       await pool.query(
-        `select ch.source_type, ch.author_relation, ch.evidence_snippet, ch.source_url, ch.evidence_confidence, ch.buying_intent, c.company_name
-           from challenges ch join companies c on c.id = ch.company_id where ch.source_url = $1`,
-        [SOCIAL_FRESH],
+        `select ch.source_type, ch.author_relation, ch.run_id, ch.evidence_snippet, c.company_name, c.country, c.vertical
+           from challenges ch join companies c on c.id = ch.company_id where ch.natural_id = $1`,
+        [`post:linkedin:${P1}`],
       )
     ).rows[0];
-    expect(ch).toMatchObject({ source_type: "linkedin_post", author_relation: "founder_owner", company_name: "Social Test Co", evidence_confidence: 85, buying_intent: 90 });
-    expect(ch.evidence_snippet).not.toContain("Jane Doe"); // the result title (author name) is never stored
-    // Only posts the AI read are kept (the lead, and the AI's drop for checking); free drops are
-    // only counted. Never the title (author name).
-    const listed = (await pool.query("select url, outcome, snippet from social_results where run_id = $1 order by url", [fetchJob.data.runId])).rows;
-    expect(Object.fromEntries(listed.map((r) => [r.url, r.outcome]))).toEqual({ [SOCIAL_FRESH]: "card", [SOCIAL_VENDOR]: "stance" });
-    expect(listed.some((r) => r.snippet.includes("Jane Doe's Post"))).toBe(false);
-
-    // An upbeat post that shows manual work (implied) becomes a card too, with lower buying intent.
-    const implied = { ...fresh.data, naturalId: "post:linkedin:implied-test", url: `${SOCIAL_FRESH}-implied` };
-    const im = fakes(pool, { social: { author_relation: "founder_owner", stance: "implied", company_name: "Social Test Co", vertical: null } });
-    expect(await extractSocial(im.deps, implied)).toMatch(/^persisted/);
-    const imCh = (await pool.query("select buying_intent, c.vertical from challenges ch join companies c on c.id = ch.company_id where ch.natural_id = $1", [implied.naturalId])).rows[0];
-    expect(imCh).toMatchObject({ buying_intent: 75, vertical: "logistics" });
-    await pool.query("delete from resolve_queue where natural_id = $1", [implied.naturalId]);
-
-    // Solved with software: still a lead, lower intent, pitched as Company OS (§1.1).
-    const solved = { ...fresh.data, naturalId: "post:linkedin:solved-test", url: `${SOCIAL_FRESH}-solved` };
-    const so = fakes(pool, { social: { author_relation: "founder_owner", stance: "solved", solved_how: "with_software", company_name: "Social Test Co", vertical: null } });
-    expect(await extractSocial(so.deps, solved)).toMatch(/^persisted/);
-    const soCh = (await pool.query("select buying_intent, structured_intelligence ->> 'product_layer' layer from challenges where natural_id = $1", [solved.naturalId])).rows[0];
-    expect(soCh).toEqual({ buying_intent: 60, layer: "company_os" });
-    await pool.query("delete from resolve_queue where natural_id = $1", [solved.naturalId]);
-    // Its website-search row would otherwise take the single search of the resolve test below.
-    await pool.query("delete from resolve_queue where natural_id = $1", [fresh.data.naturalId]);
-    await pool.query("delete from ingestion_runs where apify_run_id = $1", [RUN_ID]);
+    expect(ch).toEqual({ source_type: "linkedin_post", author_relation: "employee", run_id: runRow.id, evidence_snippet: "We still check every freight invoice by hand.", company_name: "Li Test Freight", country: "us", vertical: "logistics" });
+    expect((await pool.query("select card_outcome from li_posts where post_id = $1", [P1])).rows[0].card_outcome).toBe("card");
+    expect((await pool.query("select llm_persisted_count p from ingestion_runs where id = $1", [runRow.id])).rows[0].p).toBe(1);
+    // The same post found again (another topic or run) costs no second AI call and adds no card.
+    await pool.query("update li_posts set card_outcome = 'checking' where post_id = $1", [P1]);
+    expect(await cardLiPost(deps, cards[0]!.data)).toBe("duplicate");
+    await pool.query("delete from resolve_queue where natural_id = $1", [`post:linkedin:${P1}`]);
+    await pool.query("delete from ingestion_runs where apify_run_id = $1", [RUN_ID]); // posts and comments go with it
     await pool.query("delete from spend_events where ref = $1", [RUN_ID]);
   });
 
-  it("ingest-rotation: off by default; when on, plans the day's slots once (§4.1)", async () => {
+  it("ingest-rotation: off by default; when on, the bandit plans the day once (§4.1c)", async () => {
     expect(await ingestRotation(fakes(pool).deps)).toEqual({ skipped: "ROTATION_ENABLED is off" });
     const { deps, sent } = fakes(pool, { rotation: true, now: ROTATION_DAY });
     const out = await ingestRotation(deps);
-    expect("planned" in out && out.planned).toHaveLength(3);
+    expect("planned" in out && out.planned.job).toHaveLength(3);
     const starts = sent.filter((s) => s.queue === Q.startBoardRun);
     expect(starts).toHaveLength(3);
-    expect(starts[0]!.data).toMatchObject({ limit: 35, title: expect.any(String), vertical: expect.any(String) });
+    expect(starts[0]!.data).toMatchObject({ limit: 35, title: expect.any(String) });
+    // ≥ half the day's 4 runs on High/Medium searches: the social run plus at least one fixer search.
+    expect(starts.filter((s) => s.data.vertical === null).length).toBeGreaterThanOrEqual(1);
+    // The social slot runs LinkedIn post search on the bandit's topics (§4.1d).
+    const social = sent.filter((s) => s.queue === Q.startLiRun);
+    expect(social).toHaveLength(1);
+    expect(social[0]!.data).toMatchObject({ posts: 5, comments: 5, vertical: expect.any(String) });
+    expect(social[0]!.data.topics.length).toBeGreaterThan(0);
+    expect(social[0]!.data.topics.length).toBeLessThanOrEqual(2);
     // A retried cron job the same day starts nothing more.
     expect(await ingestRotation(deps)).toEqual({ skipped: "already planned today" });
     expect(sent.filter((s) => s.queue === Q.startBoardRun)).toHaveLength(3);
+  });
+
+  it("runs link to their searches and cards to their run, so a rejection counts against the search (§4.1c)", async () => {
+    const { linked } = await syncSearchArms({ pool });
+    expect(linked).toBeGreaterThanOrEqual(0);
+    const arms = (await pool.query("select count(*)::int n from search_arms where source = 'seed'")).rows[0].n;
+    expect(arms).toBeGreaterThanOrEqual(45 * 3 + 18 + 45 * 20);
+    // Every run from before the bandit with a title is linked, LinkedIn post searches included.
+    const unlinked = (
+      await pool.query(
+        `select count(*)::int n from ingestion_runs r where r.query_title is not null and r.job_type in ('indeed', 'linkedin', 'li_posts')
+            and (r.country is not null or r.job_type = 'li_posts') and not exists (select 1 from run_arms ra where ra.run_id = r.id)`,
+      )
+    ).rows[0].n;
+    expect(unlinked).toBe(0);
   });
 
   it("unknown employee count → domain age tags the size, asked once per domain, never drops (§6.7)", async () => {
@@ -458,6 +524,8 @@ describe.skipIf(!process.env.DATABASE_URL)("worker pipeline (database)", { timeo
     await pool.query("update resolve_queue set searched_at = searched_at - interval '1 day' where natural_id like $1", [`${R_PREFIX}%`]);
     const hit = fakes(pool, { searchCap: 5, resolveTo: { domain: R_DOMAIN, cited: [`https://www.${R_DOMAIN}/about`] } });
     expect(await resolveBatch(hit.deps)).toMatchObject({ searched: 1, resolved: 1 });
+    const checked = (await pool.query("select company_check c from companies where domain = $1", [R_DOMAIN])).rows[0].c;
+    expect(checked).toMatchObject({ domain: R_DOMAIN, sizeBand: "11-50", steps: 1, stoppedBy: "finish", costUsd: 0.002 });
     // The same card got its website: no second company, seed URL queued for the sniff.
     expect(await byName("us:resolve test other:houston")).toMatchObject({ domain: R_DOMAIN, n: 1 });
     expect((await pool.query("select count(*)::int n from seed_urls where domain = $1", [R_DOMAIN])).rows[0].n).toBe(1);
@@ -467,10 +535,10 @@ describe.skipIf(!process.env.DATABASE_URL)("worker pipeline (database)", { timeo
     expect(await byName("us:resolve test:houston")).toMatchObject({ domain: null, n: 2 });
     expect(await extractLlm(hit.deps, job("5", "Resolve Test Other", fresh))).toBe(`persisted ${R_DOMAIN}`);
 
-    // Unsure pick rescued by the free homepage check; two queued posts, one search.
+    // Two queued posts for one company: one check, the second answered by the cache.
     const twin = fakes(pool, {
       searchCap: 5,
-      resolveTo: { domain: TWIN_DOMAIN, confidence: "low", cited: [`https://${TWIN_DOMAIN}/`] },
+      resolveTo: { domain: TWIN_DOMAIN, cited: [`https://${TWIN_DOMAIN}/`] },
       pages: { [`https://${TWIN_DOMAIN}/`]: "<title>Resolve Test Twin | Freight, Houston TX</title>" },
     });
     expect(await extractLlm(twin.deps, job("6", "Resolve Test Twin", fresh))).toBe(QUEUED);

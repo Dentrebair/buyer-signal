@@ -1,23 +1,22 @@
 // Sources (PRD §10.3): one row per data source, its latest activity and a Run now control.
 // The daily rotation is off for now (worker main.ts), so job posts arrive only from Run now.
 import Link from "next/link";
-import { ArrowLeft, Briefcase, Browser, ChatsCircle, MagnifyingGlass } from "@phosphor-icons/react/ssr";
-import { AutoRefresh, RunJobPosts, RunProgress, RunSocial, RunSource } from "@/components/RunNow.tsx";
+import { ArrowLeft, ArrowSquareOut, Briefcase, Browser, LinkedinLogo, ListMagnifyingGlass, MagnifyingGlass } from "@phosphor-icons/react/ssr";
+import { AutoRefresh, ReviveSearch, RunJobPosts, RunProgress, RunSource } from "@/components/RunNow.tsx";
 import { Facts, Meta } from "@/components/Meta.tsx";
 import { PostLink } from "@/components/PostLink.tsx";
 import { ThemeToggle } from "@/components/ThemeToggle.tsx";
-import { SCOPE_LABEL, ageLabel, countryLabel, scopeOf, verticalLabel } from "@/lib/labels.ts";
-import { type BoardRun, type SocialDrop, type SocialLead, loadSources } from "@/lib/sources.ts";
+import { ageLabel, countryLabel, verticalLabel } from "@/lib/labels.ts";
+import { type BoardRun, type SearchPost, type SearchRow, loadSources } from "@/lib/sources.ts";
 
 export const dynamic = "force-dynamic";
 
-export default async function Radar({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
-  const run = (await searchParams).run;
-  const s = await loadSources(typeof run === "string" ? run : null);
+export default async function Radar() {
+  const s = await loadSources();
   const j = s.jobs;
   return (
     <div className="radar">
-      <AutoRefresh active={j.running + s.social.running > 0} />
+      <AutoRefresh active={j.running > 0} />
       <header className="radar-head">
         <Link href="/dashboard" className="radar-back">
           <ArrowLeft size={16} aria-hidden /> Inbox
@@ -52,10 +51,11 @@ export default async function Radar({ searchParams }: { searchParams: Promise<Re
           <RunJobPosts next={j.next} />
           {j.next && (
             <p className="muted source-note">
-              Pre-filled with the next slot in rotation order: {verticalLabel(j.next.vertical)}, {countryLabel(j.next.country)}.
+              Pre-filled with today&apos;s pick from the search rotation: “{j.next.title}”, {j.next.vertical ? verticalLabel(j.next.vertical) : "any vertical"},{" "}
+              {countryLabel(j.next.country)}.
             </p>
           )}
-          {j.runs.length > 0 ? <Runs runs={j.runs} kind="jobs" /> : <p className="muted">No runs yet.</p>}
+          {j.runs.length > 0 ? <Runs runs={j.runs} /> : <p className="muted">No runs yet.</p>}
         </section>
 
         <section className="card source" aria-labelledby="src-sniff">
@@ -102,32 +102,35 @@ export default async function Radar({ searchParams }: { searchParams: Promise<Re
           <RunSource source="search" label="website search" />
         </section>
 
-        <section className="card source" aria-labelledby="src-social">
+        <section className="card source" aria-labelledby="src-li">
           <div className="source-head">
-            <h2 id="src-social">
-              <ChatsCircle size={18} aria-hidden /> Social digest
+            <h2 id="src-li">
+              <LinkedinLogo size={18} aria-hidden /> LinkedIn post search
             </h2>
-            <Meta className="source-meta" items={["Posts by founders, staff and company pages", "Last 21 days"]} />
+            <Meta className="source-meta" items={["Full posts, comments and contacts", "$0.002 a post or comment"]} />
           </div>
-          <RunSocial />
           <p className="muted source-note">
-            Searches by topic, not by phrasing: each run takes the next few topics for the vertical, or the keyword you type. The AI keeps complaints
-            and upbeat posts that show manual work (marked Implied).
+            Searches LinkedIn itself for a topic and reads each post and its comments for pain, with the people behind them. A pain post by the
+            business&apos;s own people, with its company named and in one of our markets, becomes an inbox card. The rotation runs it on the
+            social topics below.
           </p>
-          {s.social.runs.length > 0 ? <Runs runs={s.social.runs} kind="social" shownId={s.social.shown?.id ?? null} /> : <p className="muted">No runs yet.</p>}
-          {s.social.shown && <SocialLeads run={s.social.shown} leads={s.social.leads} />}
-          {s.social.drops.length > 0 && <AiDrops drops={s.social.drops} />}
+          <div className="run">
+            <Link href="/linkedin" className="btn">
+              Open LinkedIn post search
+            </Link>
+          </div>
         </section>
+        <Searches rows={s.searches.rows} untried={s.searches.untried} />
       </main>
     </div>
   );
 }
 
-function Runs({ runs, kind, shownId = null }: { runs: BoardRun[]; kind: "jobs" | "social"; shownId?: string | null }) {
+function Runs({ runs }: { runs: BoardRun[] }) {
   return (
     <div className="runs-wrap">
       <table className="runs">
-        <caption className="sr-only">{kind === "jobs" ? "Latest job-post runs" : "Latest social digest runs"}</caption>
+        <caption className="sr-only">Latest job-post runs</caption>
         <thead>
           <tr>
             <th scope="col">Started</th>
@@ -149,29 +152,16 @@ function Runs({ runs, kind, shownId = null }: { runs: BoardRun[]; kind: "jobs" |
         </thead>
         <tbody>
           {runs.map((r) => (
-            <tr key={r.id} className={r.id === shownId ? "is-shown" : undefined}>
+            <tr key={r.id}>
               <td>{ageLabel(r.started_at)}</td>
               <td>
                 <span className="run-search">{r.query_title ? `“${r.query_title}”` : "No search title"}</span>
-                <Facts items={[["vertical", r.vertical ? verticalLabel(r.vertical) : kind === "jobs" && "Fixer hires, any vertical"], ["country", countryLabel(r.country)]]} />
+                <Facts items={[["vertical", r.vertical ? verticalLabel(r.vertical) : "Fixer hires, any vertical"], ["country", countryLabel(r.country)]]} />
               </td>
               <td>
-                <RunProgress status={r.status} startedAt={r.started_at} completedAt={r.completed_at} checking={r.checking} kind={kind} />
+                <RunProgress status={r.status} startedAt={r.started_at} completedAt={r.completed_at} />
               </td>
-              <td className="r num">
-                {kind === "social" && r.raw > 0 ? (
-                  <Link
-                    href={`/radar?run=${r.id}#social-posts`}
-                    className="link"
-                    aria-current={r.id === shownId ? "true" : undefined}
-                    aria-label={`Show the leads from this run (${r.raw} posts searched)`}
-                  >
-                    {r.raw}
-                  </Link>
-                ) : (
-                  r.raw
-                )}
-              </td>
+              <td className="r num">{r.raw}</td>
               <td className="r num">{r.passed}</td>
               <td className="r num">{r.cards}</td>
               <td className="r num">${r.cost_usd.toFixed(4)}</td>
@@ -183,75 +173,7 @@ function Runs({ runs, kind, shownId = null }: { runs: BoardRun[]; kind: "jobs" |
   );
 }
 
-// "Full automation 75%" / "Partial automation 40%", as on the inbox cards.
-function ScopeTag({ pct }: { pct: number | null }) {
-  const scope = scopeOf(pct);
-  if (!scope) return null;
-  return (
-    <span className={`scope-tag scope-${scope}`}>
-      {SCOPE_LABEL[scope]} <span className="num">{pct}%</span>
-    </span>
-  );
-}
-
-// Only the posts that became cards; the run's counts above say how many were dropped.
-function SocialLeads({ run, leads }: { run: BoardRun; leads: SocialLead[] }) {
-  return (
-    <section className="social-posts" id="social-posts" aria-labelledby="social-posts-h">
-      <h3 id="social-posts-h">
-        New leads from this run <span className="num">{leads.length}</span>
-      </h3>
-      <Meta className="social-ai" items={[`Started ${ageLabel(run.started_at)}`, run.query_title]} />
-      {leads.length === 0 ? (
-        <p className="muted social-empty">
-          {run.checking > 0 ? `The AI is still reading ${run.checking} post${run.checking > 1 ? "s" : ""}.` : `None: no post out of ${run.raw} showed a named business's own manual work.`}
-        </p>
-      ) : (
-        <ul className="social-list">
-          {leads.map((l) => {
-            const url = /^https:\/\//i.test(l.url) ? l.url : null;
-            return (
-              <li key={l.id} className={`social-item${url ? " ev-social" : ""}`}>
-                {url && <PostLink url={url} sourceType="linkedin_post" id={`sr-${l.id}`} />}
-                <div className="lead-head">
-                  {l.company_id ? (
-                    <Link href={`/dashboard?id=${l.company_id}`} className="link lead-name">
-                      {l.company_name ?? "Unnamed company"}
-                    </Link>
-                  ) : (
-                    <span className="lead-name">{l.company_name ?? "Unnamed company"}</span>
-                  )}
-                  <ScopeTag pct={l.automatable_pct} />
-                  {l.stance === "implied" && (
-                    <span className="verdict verdict-implied" title="An upbeat or neutral post that shows manual work; the pain is inferred, so it scores lower">
-                      Implied
-                    </span>
-                  )}
-                  {l.stance === "solved" && l.solved_how && <SolvedTag how={l.solved_how} />}
-                </div>
-                {l.symptom && <p className="social-snippet">{l.symptom}</p>}
-                <p className="muted social-ai">“{l.snippet}”</p>
-                <Meta
-                  className="social-ai"
-                  items={[
-                    l.posted_at && `Posted ${ageLabel(l.posted_at)}`,
-                    l.signal_score !== null && (
-                      <>
-                        Signal <span className="num">{l.signal_score}</span>
-                      </>
-                    ),
-                  ]}
-                />
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </section>
-  );
-}
-
-// The AI's drops, so a real post dropped by mistake can be caught. Free drops are not kept.
+// Why a post did not become a lead: LinkedIn post search's card gate, or the Google digest's AI.
 const AUTHOR: Record<string, string> = {
   founder_owner: "Founder or owner",
   employee: "Employee",
@@ -261,30 +183,62 @@ const AUTHOR: Record<string, string> = {
   commentator: "Commentator",
   recruiter: "Recruiter",
 };
-const STANCE: Record<string, string> = { suffering: "describes a problem", implied: "shows manual work", selling: "selling", commenting: "commenting" };
+const STANCE: Record<string, string> = { suffering: "describes a problem", implied: "shows manual work", solved: "how they solved it", selling: "selling", commenting: "commenting" };
 
-function dropReason(d: SocialDrop): string {
+function dropReason(d: Pick<SearchPost, "outcome" | "author_relation" | "stance">): string {
+  if (d.outcome === "checking") return "Being checked for a card";
+  if (d.outcome === "before_cards") return "Read before posts became cards";
+  if (d.outcome === "duplicate") return "Already a card from another search";
+  if (d.outcome === "no_market") return "Outside our markets";
   if (d.outcome === "no_company") return "No company named";
   if (d.outcome === "no_fit") return "Nothing to automate";
   if (d.outcome === "too_large") return "Company too large";
+  if (d.outcome === "ai_error") return "The AI couldn't read it";
   return `${AUTHOR[d.author_relation ?? ""] ?? "Unknown author"}, ${STANCE[d.stance ?? ""] ?? "no manual work"}`;
 }
 
-function AiDrops({ drops }: { drops: SocialDrop[] }) {
+// The posts a search found: what the pain was, the verdict, and the original post.
+function SearchPosts({ posts }: { posts: SearchPost[] }) {
+  if (!posts.length) return null;
+  const leads = posts.filter((p) => p.outcome === "card").length;
   return (
-    <details className="ai-drops">
+    <details className="search-posts">
       <summary>
-        Check the AI&apos;s drops <span className="muted num">· {drops.length}</span> <span className="muted">· kept 7 days</span>
+        <span className="num">{posts.length}</span> {posts.length === 1 ? "post" : "posts"} found
+        {leads > 0 && (
+          <>
+            , <span className="num">{leads}</span> {leads === 1 ? "lead" : "leads"}
+          </>
+        )}
       </summary>
       <ul className="social-list">
-        {drops.map((d) => {
-          const url = /^https:\/\//i.test(d.url) ? d.url : null;
+        {posts.map((p) => {
+          const url = p.url && /^https:\/\//i.test(p.url) ? p.url : null;
+          const social = p.kind !== "job";
           return (
-            <li key={d.id} className={`social-item${url ? " ev-social" : ""}`}>
-              {url && <PostLink url={url} sourceType="linkedin_post" id={`dr-${d.id}`} />}
-              <span className="verdict">{dropReason(d)}</span>
-              {d.symptom && <p className="muted social-ai">AI: {d.symptom}</p>}
-              {d.snippet && <p className="social-snippet">“{d.snippet}”</p>}
+            <li key={`${p.kind}-${p.id}`} className={`social-item${social && url ? " ev-social" : ""}`}>
+              {social && url && <PostLink url={url} sourceType="linkedin_post" id={`sp-${p.id}`} />}
+              <div className="lead-head">
+                {p.outcome === "card" ? <span className="verdict verdict-green">Lead</span> : <span className="verdict">{dropReason(p)}</span>}
+                {p.company_id && (
+                  <Link href={`/dashboard?id=${p.company_id}`} className="link lead-name">
+                    {p.company_name ?? "Unnamed company"}
+                  </Link>
+                )}
+              </div>
+              {p.symptom && (
+                <p className="post-pain">
+                  <strong>{p.outcome === "card" || p.kind === "li" ? "Pain:" : "Why dropped:"}</strong> {p.symptom}
+                </p>
+              )}
+              {p.title && <p className="social-snippet">{p.title}</p>}
+              {p.snippet && <p className="muted social-ai">“{p.snippet}”</p>}
+              {!social && url && (
+                <a href={url} target="_blank" rel="noopener noreferrer" className="link post-open">
+                  Open the job ad <ArrowSquareOut size={13} aria-hidden />
+                  <span className="sr-only">(opens in a new tab)</span>
+                </a>
+              )}
             </li>
           );
         })}
@@ -293,18 +247,78 @@ function AiDrops({ drops }: { drops: SocialDrop[] }) {
   );
 }
 
-// How a "solved" post dealt with its problem (§1.1): by hand or partly is a lead like Implied;
-// with software is a lower lead for Company OS.
-const SOLVED: Record<string, { label: string; title: string }> = {
-  by_hand: { label: "Solved by labor", title: "They fixed it with people or a manual workaround, so the work is still manual" },
-  partly: { label: "Partly solved", title: "They automated part of it; the rest is still done by hand" },
-  with_software: { label: "Already automating", title: "A tool removed this work; pitch joining their tools up (Company OS)" },
-};
-function SolvedTag({ how }: { how: string }) {
-  const s = SOLVED[how];
-  return s ? (
-    <span className={`verdict verdict-solved-${how}`} title={s.title}>
-      {s.label}
-    </span>
-  ) : null;
+// What the search rotation has learned (§4.1c): every search that has run, best first.
+const STATUS_LABEL: Record<SearchRow["status"], string> = { trying: "Trying", strong: "Strong", weak: "Weak", retired: "Retired" };
+const GROUP_LABEL: Record<SearchRow["group"], string> = { high: "High urgency", medium: "Medium urgency", low: "Low urgency" };
+
+function Searches({ rows, untried }: { rows: SearchRow[]; untried: { job: number; social: number } }) {
+  return (
+    <section className="card source" aria-labelledby="src-searches">
+      <div className="source-head">
+        <h2 id="src-searches">
+          <ListMagnifyingGlass size={18} aria-hidden /> Searches
+        </h2>
+        <Meta className="source-meta" items={[`${untried.job} job searches not tried yet`, `${untried.social} social topics not tried yet`]} />
+      </div>
+      <p className="muted source-note">
+        Each search is scored on cards per dollar, minus cards you reject as not real pain or the wrong company; a Low urgency card counts a quarter
+        and older runs count less. A search with 5 runs and no card retires itself. Open a search&apos;s posts to see each pain and the original post.
+      </p>
+      {rows.length === 0 ? (
+        <p className="muted">No search has run yet.</p>
+      ) : (
+        <div className="runs-wrap">
+          <table className="runs searches">
+            <caption className="sr-only">Searches the rotation has tried</caption>
+            <thead>
+              <tr>
+                <th scope="col">Search</th>
+                <th scope="col">Status</th>
+                <th scope="col" className="r">
+                  Runs
+                </th>
+                <th scope="col" className="r">
+                  Cards
+                </th>
+                <th scope="col" className="r">
+                  Cost
+                </th>
+                <th scope="col" className="r">
+                  Cards per $
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id}>
+                  <td>
+                    <span className="run-search">
+                      {r.kind === "job" ? "Job ads for" : "Posts about"} “{r.term}”
+                    </span>
+                    <span className="facts">
+                      <span className={`urgency-tag urgency-${r.group}`}>{GROUP_LABEL[r.group]}</span>
+                      <span className="fact fact-vertical">{r.vertical ? verticalLabel(r.vertical) : "Any vertical"}</span>
+                      <span className="fact fact-country">{countryLabel(r.country)}</span>
+                    </span>
+                    <SearchPosts posts={r.posts} />
+                  </td>
+                  <td>
+                    <span className={`run-state search-${r.status}`}>{STATUS_LABEL[r.status]}</span>
+                    {r.status === "retired" && <ReviveSearch id={r.id} term={r.term} />}
+                  </td>
+                  <td className="r num">{r.runs}</td>
+                  <td className="r num">
+                    {r.cards}
+                    {r.junk > 0 && <span className="muted"> ({r.junk} rejected)</span>}
+                  </td>
+                  <td className="r num">${r.cost.toFixed(4)}</td>
+                  <td className="r num">{Math.round(r.perDollar)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
 }

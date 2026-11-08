@@ -56,7 +56,8 @@ export { PRODUCT_LABEL, PRODUCT_LAYERS, URGENCY_LABEL, URGENCY_TIERS, type Urgen
 export const verticalLabel = (slug: string | null) =>
   slug && slug in VERTICALS ? VERTICALS[slug as keyof typeof VERTICALS] : "Vertical unknown";
 
-export const countryLabel = (c: string | null) => (c && c in COUNTRIES ? COUNTRIES[c as keyof typeof COUNTRIES] : "—");
+// "all": a LinkedIn topic search, which has no market filter (§4.1d).
+export const countryLabel = (c: string | null) => (c === "all" ? "Any market" : c && c in COUNTRIES ? COUNTRIES[c as keyof typeof COUNTRIES] : "—");
 
 export function ageLabel(d: Date | string | null): string {
   if (!d) return "date not recorded";

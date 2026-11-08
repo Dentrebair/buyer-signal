@@ -77,27 +77,35 @@ export function buildSeedExtraction(post: ExtractionPost): LlmRequest<SeedExtrac
   };
 }
 
-// LinkedIn posts (§4.1a, Q59): who wrote it, why, and which company the work happens at.
-export const SocialExtraction = StructuredIntelligence.extend({ company_name: z.string().nullable(), vertical: VerticalSlug.nullable() });
-export type SocialExtraction = z.infer<typeof SocialExtraction>;
-
-const SOCIAL_RULES = `
-This item is a Google search snippet of a public LinkedIn post, not a job post. Also return:
-- author_relation: founder_owner (owns or runs the business whose work it describes), employee, company_page (the post URL slug is the company's page), former_employee ("ex-", "former", past tense), vendor (sells software or services, including consultants pitching), commentator (general opinion, influencer, trainer), recruiter.
-- stance: suffering (complains about or describes as a burden manual work their own business does now), implied (positive or neutral — hiring, growth, a milestone, thanking the team — but it shows manual, repetitive or headcount-driven work at their own business, e.g. "welcome our 3rd dispatcher as we hit 200 loads a week", "our team processed 4,000 invoices by hand this quarter"), solved (tells how their own business dealt with a manual-work problem it had: "invoices were piling up, so we hired two admins"), selling (pitches a product or service), commenting (opinion, advice, story about others). A positive tone alone is not implied: the post must show the work. A vendor's case study about a client is selling, not solved.
+// LinkedIn post search (§4.1d): a post the read kept (pain, the business's own author, company
+// named) becomes a card. The read already decided who wrote it and why; this call fills the card.
+const LI_CARD_RULES = `
+This item is the full text of a public LinkedIn post, not a job post. Its author, their stance and their company are already known and given in <known>; describe the manual work at that company. Also return:
+- author_relation and stance: copy them from <known>.
 - solved_how: only when stance is solved, else null. by_hand = they solved it with people or a manual workaround (hired, a shared spreadsheet, an extra shift, a checklist); partly = they automated part and the rest is still manual; with_software = a tool or automation removed the manual work.
-- verified_symptom: for implied, state the work the post shows, not its tone ("hiring a 3rd dispatcher as load volume grows").
-- company_name: the business where the manual work happens, only if the snippet or the URL slug names it ("our team at Acme", a company-page slug). Never a person's name, never guessed. null if not named.
-- blast_radius and automation_fit: judge from the snippet; Sporadic and Nuisance when it does not say.
+- verified_symptom: the work the post shows at that company ("hiring a 3rd dispatcher as load volume grows"), never its tone.
+- blast_radius and automation_fit: judge from the post; Sporadic and Nuisance when it does not say.
 - Never copy a person's name into verified_symptom or any other field.`;
 
-export function buildSocialExtraction(post: { url: string; text: string }): LlmRequest<SocialExtraction> {
+export function buildLiCardExtraction(post: {
+  text: string;
+  authorHeadline: string | null;
+  company: string;
+  authorRelation: string;
+  stance: string;
+}): LlmRequest<SeedExtraction> {
   return {
-    system: SYSTEM + VERTICAL_RULE + SOCIAL_RULES,
-    user: ["<post>", `<url>${esc(post.url)}</url>`, `<snippet>\n${esc(post.text)}\n</snippet>`, "</post>"].join("\n"),
-    schemaName: "social_extraction",
-    jsonSchema: toLlmJsonSchema(SocialExtraction),
-    parse: (raw) => SocialExtraction.parse(clipText(raw)),
+    system: SYSTEM + VERTICAL_RULE + LI_CARD_RULES,
+    user: [
+      "<post>",
+      `<text>\n${esc(truncateWords(post.text))}\n</text>`,
+      `<author_headline>${esc(post.authorHeadline ?? "not stated")}</author_headline>`,
+      "</post>",
+      `<known><company>${esc(post.company)}</company><author_relation>${post.authorRelation}</author_relation><stance>${post.stance}</stance></known>`,
+    ].join("\n"),
+    schemaName: "linkedin_card",
+    jsonSchema: toLlmJsonSchema(SeedExtraction),
+    parse: (raw) => SeedExtraction.parse(clipText(raw)),
   };
 }
 

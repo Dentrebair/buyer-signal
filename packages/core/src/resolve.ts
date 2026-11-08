@@ -12,7 +12,7 @@ export const ResolveOutput = z.object({
 });
 export type ResolveOutput = z.infer<typeof ResolveOutput>;
 
-const COUNTRY_NAME = { in: "India", ae: "United Arab Emirates", us: "United States" } as const;
+export const COUNTRY_NAME = { in: "India", ae: "United Arab Emirates", us: "United States" } as const;
 
 const SYSTEM = `You find the official website of one small or mid-size company from web search results.
 
@@ -49,7 +49,7 @@ export function buildResolve(q: ResolveQuery): LlmRequest<ResolveOutput> {
   };
 }
 
-const NOT_A_COMPANY_SITE =
+export const NOT_A_COMPANY_SITE =
   /(^|\.)(linkedin|facebook|instagram|twitter|x|youtube|indeed|glassdoor|naukri|naukrigulf|bayt|yelp|justdial|indiamart|tradeindia|yellowpages|google|bing|wikipedia|zoominfo|crunchbase|dnb|bloomberg|mapquest|bbb|ziprecruiter|apollo|rocketreach)\.[a-z.]+$/;
 
 // Accept the model's pick only if it is high confidence, not a directory, and one of the cited

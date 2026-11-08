@@ -1,6 +1,6 @@
 // Ingestion bookkeeping (PRD §5.1, §5.3, Q63): ingestion_runs, seen_items dedup, domain_cache.
 import type pg from "pg";
-import { type Country, type SlotHistory, type VerticalSlug, apifyCycleKey } from "@bs/core";
+import { apifyCycleKey } from "@bs/core";
 import type { Db } from "./pool.ts";
 import { reserveSpend } from "./spend.ts";
 
@@ -157,18 +157,6 @@ export async function claimRun(db: Db, id: string, to: "fetching" | "failed"): P
 
 // Per-slot board-run history for the rotation (§4.1): runs, last run, and how many new posts
 // became cards. Every Indeed run with a vertical counts, manual ones included.
-export async function rotationHistory(db: Db): Promise<SlotHistory[]> {
-  const r = await db.query<{ vertical: VerticalSlug; country: Country; runs: number; last_run_at: Date | null; fresh: number; cards: number }>(
-    `select vertical, country, count(*)::int runs, max(started_at) last_run_at,
-            coalesce(sum(raw_items_ingested - dropped_dedup_count - dropped_stale_count), 0)::int fresh,
-            coalesce(sum(llm_persisted_count + persisted_no_website_count), 0)::int cards
-       from ingestion_runs
-      where job_type = 'indeed' and vertical is not null and country is not null and status <> 'failed'
-      group by vertical, country`,
-  );
-  return r.rows.map((x) => ({ vertical: x.vertical, country: x.country, runs: x.runs, lastRunAt: x.last_run_at, fresh: x.fresh, cards: x.cards }));
-}
-
 // Claims the day; false = already planned (a retried or duplicate cron job).
 export async function claimRotationDay(c: pg.PoolClient, day: string, slots: object[]): Promise<boolean> {
   const r = await c.query("insert into rotation_days (day, slots) values ($1, $2) on conflict (day) do nothing", [day, JSON.stringify(slots)]);

@@ -3,9 +3,10 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { Play } from "@phosphor-icons/react";
+import { LI_MAX_COMMENTS, LI_MAX_POSTS, liCostUsd } from "@bs/core/liSearch";
 import { SOCIAL_TOPICS } from "@bs/core/social";
 import { COUNTRIES, FIXER_TITLES, SEARCH_TITLES, VERTICALS, VERTICAL_MARKETS, type Country, type VerticalSlug } from "@bs/core/verticals";
-import { type RunResult, runJobPosts, runSocial, runSource } from "@/app/radar/actions.ts";
+import { type RunResult, reviveSearch, runJobPosts, runLinkedin, runSource } from "@/app/radar/actions.ts";
 import { Meta } from "./Meta.tsx";
 
 // Indeed price (§4.1): $0.0001 per post + $0.001 per run start.
@@ -24,10 +25,10 @@ type JobScope = VerticalSlug | "";
 const titlesFor = (v: JobScope): readonly string[] => (v ? SEARCH_TITLES[v] : FIXER_TITLES);
 const marketsFor = (v: JobScope): Country[] => (v ? VERTICAL_MARKETS[v] : (Object.keys(COUNTRIES) as Country[]));
 
-export function RunJobPosts({ next }: { next: { vertical: VerticalSlug; country: Country; title: string } | null }) {
+export function RunJobPosts({ next }: { next: { vertical: string | null; country: string; title: string } | null }) {
   const [open, setOpen] = useState(false);
-  const [vertical, setVertical] = useState<JobScope>(next?.vertical ?? "accounting");
-  const [country, setCountry] = useState<Country>(next?.country ?? marketsFor(vertical)[0]!);
+  const [vertical, setVertical] = useState<JobScope>(next ? ((next.vertical ?? "") as JobScope) : "accounting");
+  const [country, setCountry] = useState<Country>((next?.country as Country | undefined) ?? marketsFor(vertical)[0]!);
   const [title, setTitle] = useState(next?.title ?? titlesFor(vertical)[0]!);
   const [limit, setLimit] = useState(35);
   const [result, setResult] = useState<RunResult | null>(null);
@@ -109,19 +110,23 @@ export function RunJobPosts({ next }: { next: { vertical: VerticalSlug; country:
   );
 }
 
-// Search pages cost $0.0045 each (~10 results); extraction runs only on posts that pass the gate.
-export function RunSocial() {
+// LinkedIn post search (§4.1d): every post and every comment is one $0.002 Apify event.
+export function RunLinkedin() {
   const [open, setOpen] = useState(false);
   const [vertical, setVertical] = useState<VerticalSlug>("logistics");
-  const [keyword, setKeyword] = useState("");
-  const [country, setCountry] = useState<Country>("us");
-  const [pages, setPages] = useState(1);
+  const [topic, setTopic] = useState("");
+  const [posts, setPosts] = useState(10);
+  const [comments, setComments] = useState(10);
   const [result, setResult] = useState<RunResult | null>(null);
   const [pending, start] = useTransition();
+  const cost = liCostUsd({ posts, comments });
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     start(async () => {
-      const r = await runSocial({ vertical, keyword: keyword.trim() || null, country, pages }).catch((err: Error) => ({ ok: false as const, message: err.message }));
+      const r = await runLinkedin({ vertical, topics: [topic.trim() || SOCIAL_TOPICS[vertical][0]], posts, comments }).catch((err: Error) => ({
+        ok: false as const,
+        message: err.message,
+      }));
       setResult(r);
       if (r.ok) (setOpen(false), announceRun());
     });
@@ -136,7 +141,7 @@ export function RunSocial() {
       </div>
     );
   return (
-    <form className="run-form" onSubmit={submit} aria-label="Run social digest now">
+    <form className="run-form run-form-social" onSubmit={submit} aria-label="Run LinkedIn post search now">
       <label className="field">
         Vertical
         <select value={vertical} onChange={(e) => setVertical(e.target.value as VerticalSlug)}>
@@ -148,42 +153,42 @@ export function RunSocial() {
         </select>
       </label>
       <label className="field">
-        Keyword <span className="muted">(optional)</span>
+        Topic
         <input
           type="text"
-          value={keyword}
-          onChange={(e) => setKeyword(e.target.value)}
+          value={topic}
+          onChange={(e) => setTopic(e.target.value)}
           maxLength={40}
-          placeholder={`e.g. ${SOCIAL_TOPICS[vertical][0]}`}
-          aria-describedby="social-kw-help"
+          placeholder={SOCIAL_TOPICS[vertical][0]}
+          aria-describedby="li-topic-help"
         />
-        <span id="social-kw-help" className="muted">
-          Empty: the next topics for this vertical
+        <span id="li-topic-help" className="field-help">
+          Searched as a phrase. Leave empty for “{SOCIAL_TOPICS[vertical][0]}”
         </span>
       </label>
       <label className="field">
-        Market
-        <select value={country} onChange={(e) => setCountry(e.target.value as Country)}>
-          {(Object.keys(COUNTRIES) as Country[]).map((c) => (
-            <option key={c} value={c}>
-              {COUNTRIES[c]}
+        Posts
+        <select value={posts} onChange={(e) => setPosts(Number(e.target.value))}>
+          {[5, 10, 20, 30, LI_MAX_POSTS].map((n) => (
+            <option key={n} value={n}>
+              {n}
             </option>
           ))}
         </select>
       </label>
       <label className="field">
-        Result pages
-        <select value={pages} onChange={(e) => setPages(Number(e.target.value))}>
-          {[1, 2, 3].map((n) => (
+        Comments per post
+        <select value={comments} onChange={(e) => setComments(Number(e.target.value))}>
+          {[0, 5, 10, LI_MAX_COMMENTS].map((n) => (
             <option key={n} value={n}>
-              {n} (~{n * 10} posts)
+              {n === 0 ? "None" : n}
             </option>
           ))}
         </select>
       </label>
       <p className="run-cost muted">
-        About ${(pages * 0.0045 + 0.00005).toFixed(4)} of Apify, plus about $0.0005 of AI per post that passes the gate. Posts from the last 21 days only.
-        Expect few leads: most posts are vendors or commentators, and those are dropped.
+        At most ${cost.apify.toFixed(3)} of Apify if every post has {comments} comments, plus about ${cost.ai.toFixed(3)} of AI. Posts from the last 21 days only.
+        Keeps each author&apos;s and commenter&apos;s name, headline and profile link for 60 days.
       </p>
       <div className="run-actions">
         <button type="button" className="btn" onClick={() => setOpen(false)} disabled={pending}>
@@ -249,10 +254,10 @@ const clock = (ms: number) => {
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
 };
 
-// Status cell: the current step, a live timer and the usual time for that step.
-export function RunProgress(x: { status: string; startedAt: string; completedAt: string | null; checking: number; kind: "jobs" | "social" }) {
+// Status cell of a job-post run: the current step, a live timer and the usual time for that step.
+export function RunProgress(x: { status: string; startedAt: string; completedAt: string | null }) {
   const [now, setNow] = useState<number | null>(null); // null on the server: no timer in the HTML, so no hydration mismatch
-  const done = (x.status === "done" && x.checking === 0) || x.status === "failed";
+  const done = x.status === "done" || x.status === "failed";
   useEffect(() => {
     setNow(Date.now());
     if (done) return;
@@ -266,7 +271,7 @@ export function RunProgress(x: { status: string; startedAt: string; completedAt:
     return (
       <span className="run-progress">
         <span className="run-state run-done">Done</span>
-        {end && x.kind === "jobs" ? <span className="meta">Took {clock(end - start)}</span> : null}
+        {end ? <span className="meta">Took {clock(end - start)}</span> : null}
       </span>
     );
   }
@@ -274,22 +279,42 @@ export function RunProgress(x: { status: string; startedAt: string; completedAt:
     x.status === "starting"
       ? { n: 1, label: "Starting", usual: "a few seconds" }
       : x.status === "running"
-        ? { n: 1, label: x.kind === "social" ? "Searching Google" : "Collecting posts", usual: x.kind === "social" ? "under 1 min" : "1–3 min" }
-        : x.status === "fetching"
-          ? { n: 2, label: "Reading results", usual: "a few seconds" }
-          : { n: 3, label: `AI reading posts, ${x.checking} left`, usual: `about ${Math.max(1, Math.round((x.checking * 6) / 2))}s` };
+        ? { n: 1, label: "Collecting posts", usual: "1–3 min" }
+        : { n: 2, label: "Reading results", usual: "a few seconds" };
   return (
     <span className="run-progress" role="status">
       <span className="run-state run-active">{step.label}</span>
       <Meta
         items={[
-          `Step ${step.n} of 3`,
+          `Step ${step.n} of 2`,
           <span key="t" className="num">
             {now === null ? "…" : clock(now - start)}
           </span>,
           `Usually ${step.usual}`,
         ]}
       />
+    </span>
+  );
+}
+
+// Searches table: bring back a retired search (§4.1c).
+export function ReviveSearch({ id, term }: { id: string; term: string }) {
+  const [result, setResult] = useState<RunResult | null>(null);
+  const [pending, start] = useTransition();
+  if (result?.ok) return <span className="run-state run-done">Revived</span>;
+  return (
+    <span className="revive">
+      <button
+        type="button"
+        className="btn btn-sm"
+        disabled={pending}
+        aria-busy={pending}
+        aria-label={`Revive the search ${term}`}
+        onClick={() => start(async () => setResult(await reviveSearch(id).catch((err: Error) => ({ ok: false as const, message: err.message }))))}
+      >
+        {pending ? "Reviving…" : "Revive"}
+      </button>
+      {result && !result.ok && <span className="error">{result.message}</span>}
     </span>
   );
 }

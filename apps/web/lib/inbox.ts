@@ -119,7 +119,21 @@ export interface Company extends Row {
   contact_whatsapp: string | null;
   contact_source_url: string | null;
   actioned_at: string | null;
+  company_check: CompanyCheckView | null;
   challenges: Challenge[];
+}
+
+// What the company-check agent found (PRD §5.1a), as stored on the company.
+export interface CompanyCheckView {
+  domain: string | null;
+  sizeBand: "1-10" | "11-50" | "51-200" | "200+" | "unknown";
+  sizeEvidenceUrl: string | null;
+  verticalMatch: "yes" | "no" | "unsure";
+  placeMatch: "yes" | "no" | "unsure";
+  summary: string;
+  steps: number;
+  costUsd: number;
+  checkedAt: string;
 }
 
 export interface Inbox {

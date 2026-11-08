@@ -9,24 +9,14 @@ import {
   type QueueName,
   type RawJobPost,
   type StartBoardRun,
-  type StartSocialRun,
   type ExtractLlmInput,
   ExtractLlm,
-  type FetchSocial,
-  type ExtractSocial,
   type AuthorRelation,
-  socialQuery,
   matchAtoms,
   urgencyTier,
   RECHECKS,
   RECHECK_SECONDS,
-  SEARCH_ACTOR,
-  SEARCH_ACTOR_MIN_CAP,
-  SEARCH_PRICES,
-  buildSocialExtraction,
   gateSnippet,
-  linkedinPost,
-  linkedinSearchInput,
   type StructuredIntelligence,
   MAX_SIGNAL_AGE_DAYS,
   Q,
@@ -35,7 +25,6 @@ import {
   type VerticalSlug,
   type Country,
   websiteSignals,
-  acceptResolved,
   homepageCandidates,
   pickHomepage,
   apifyChargeCap,
@@ -44,26 +33,51 @@ import {
   blastRadius,
   buildJobExtraction,
   buildSeedExtraction,
-  buildResolve,
+  runCompanyCheck,
   checkFreshness,
   classifySize,
   domainCacheKey,
   gateJobPost,
-  type PlannedSlot,
-  planRotation,
+  type ArmSpec,
+  FIXER_TITLES,
+  SEARCH_TITLES,
+  SOCIAL_TOPICS,
+  VERTICAL_MARKETS,
+  COUNTRIES,
+  isFixerHire,
+  planDay,
+  seedArms,
+  seededRng,
   signalScore,
   weightsFor,
   worstCaseApifyCost,
+  type StartLiRun,
+  type FetchLiRun,
+  type ReadLiPost,
+  type CardLiPost,
+  type LiRead,
+  LI_ARM_COUNTRY,
+  LI_MAX_COMMENTS,
+  LI_TOPICS_PER_RUN,
+  buildLiCardExtraction,
+  liCardGate,
+  LI_POST_ACTOR,
+  LI_PRICES,
+  buildLiRead,
+  liItems,
+  liSearchInput,
+  mapLiItems,
 } from "@bs/core";
 import {
   type DropCounter,
-  type SocialOutcome,
   purgeSocialResults,
-  recordSocialResult,
-  setSocialOutcome,
   bumpCounters,
   claimRotationDay,
-  rotationHistory,
+  armHistory,
+  backfillRunArms,
+  linkRunArms,
+  retireDeadArms,
+  seedSearchArms,
   cacheDomain,
   cachedDomain,
   claimRun,
@@ -93,7 +107,15 @@ import {
   settleApifyRun,
   unfinishedRuns,
   upsertCompany,
+  saveCompanyCheck,
   withTransaction,
+  liPostToRead,
+  liPostForCard,
+  setLiCardOutcome,
+  markLiError,
+  purgeLinkedin,
+  saveLiItems,
+  saveLiRead,
 } from "@bs/db";
 import { type ApifyClient, type Page, type SniffInput, type SniffResult, INDEED_ACTOR, INDEED_PRICES, TERMINAL, indeedInput, mapIndeedItem, pageText, runCostUsd } from "@bs/integrations";
 
@@ -102,6 +124,9 @@ export interface Settings {
   rotationEnabled: boolean; // ROTATION_ENABLED: the daily ingest-rotation starts paid runs only when true
   boardSlotsPerDay: number; // BOARD_SLOTS_PER_DAY (§4.1)
   boardPostsPerSlot: number; // BOARD_POSTS_PER_SLOT
+  socialSlotsPerDay: number; // SOCIAL_SLOTS_PER_DAY (§4.1c): LinkedIn post searches a day
+  liPostsPerTopic: number; // LI_POSTS_PER_TOPIC (§4.1d)
+  liCommentsPerPost: number; // LI_COMMENTS_PER_POST
   searchDailyCap: number; // SEARCH_DAILY_CAP: paid website searches per UTC day (§5.1 step 5c)
 }
 
@@ -133,20 +158,49 @@ const DEFER_SECONDS = 3600; // over cap → try again in an hour (§5.3)
 // ── ingest-rotation (daily cron) ─────────────────────────────────────────────
 // Plans the day's slots (§4.1) and sends one start-board-run per slot in the same transaction
 // as the day's claim, so a retried cron job never starts a second set of paid runs.
-export async function ingestRotation(d: Deps): Promise<{ planned: PlannedSlot[] } | { skipped: string }> {
+export async function ingestRotation(d: Deps): Promise<{ planned: { job: object[]; social: object[] } } | { skipped: string }> {
   if (!d.settings.rotationEnabled) return { skipped: "ROTATION_ENABLED is off" };
   const now = d.now();
-  const plan = planRotation(await rotationHistory(d.pool), d.settings.boardSlotsPerDay, now);
-  if (!plan.length) return { skipped: "no slot due" };
+  const day = now.toISOString().slice(0, 10);
+  await syncSearchArms(d);
+  const { arms, runs } = await armHistory(d.pool);
+  const plan = planDay(arms, runs, { job: d.settings.boardSlotsPerDay, social: d.settings.socialSlotsPerDay, topicsPerSocial: LI_TOPICS_PER_RUN }, seededRng(day), now);
+  const job = plan.job.map((a) => ({ country: a.country as Country, title: a.term, vertical: a.vertical as VerticalSlug | null, limit: d.settings.boardPostsPerSlot }));
+  // Social topics run as LinkedIn post search (§4.1d).
+  const social = plan.social.map((s) => ({
+    vertical: s.vertical as VerticalSlug,
+    topics: s.topics.map((t) => t.term),
+    posts: d.settings.liPostsPerTopic,
+    comments: d.settings.liCommentsPerPost,
+  }));
+  if (!job.length && !social.length) return { skipped: "no search to run" };
   const claimed = await withTransaction(d.pool, async (c) => {
-    if (!(await claimRotationDay(c, now.toISOString().slice(0, 10), plan))) return false;
-    for (const s of plan)
-      await d.send(Q.startBoardRun, { country: s.country, title: s.title, vertical: s.vertical, limit: d.settings.boardPostsPerSlot } satisfies StartBoardRun, undefined, c);
+    if (!(await claimRotationDay(c, day, [...job, ...social]))) return false;
+    for (const j of job) await d.send(Q.startBoardRun, j satisfies StartBoardRun, undefined, c);
+    for (const s of social) await d.send(Q.startLiRun, s satisfies StartLiRun, undefined, c);
     return true;
   });
   if (!claimed) return { skipped: "already planned today" };
-  d.log("rotation planned", { slots: plan });
-  return { planned: plan };
+  d.log("rotation planned", { job, social });
+  return { planned: { job, social } };
+}
+
+// The arms the code knows, runs from before the bandit, and retirements (5 runs, 0 cards).
+const jobArm = (vertical: VerticalSlug | null, country: string, term: string): ArmSpec => ({
+  kind: "job",
+  vertical,
+  country,
+  term,
+  group: vertical === null || isFixerHire(term) ? "high" : "low",
+});
+export async function syncSearchArms(d: Pick<Deps, "pool">): Promise<{ added: number; linked: number; retired: number }> {
+  const added = await seedSearchArms(
+    d.pool,
+    seedArms({ markets: VERTICAL_MARKETS, titles: SEARCH_TITLES, fixerTitles: FIXER_TITLES, countries: Object.keys(COUNTRIES), topics: SOCIAL_TOPICS, topicCountry: LI_ARM_COUNTRY }),
+  );
+  const linked = await backfillRunArms(d.pool, (kind, term) => (kind === "social" ? "medium" : isFixerHire(term) ? "high" : "low"));
+  const retired = await retireDeadArms(d.pool);
+  return { added, linked, retired };
 }
 
 // ── start-board-run ─────────────────────────────────────────────────────────
@@ -182,6 +236,7 @@ export async function startBoardRun(
     await release(); // a concurrent attempt owns this key
     return { skipped: "concurrent attempt" };
   }
+  await linkRunArms(d.pool, runId, [jobArm(job.vertical, job.country, job.title)]);
   let apifyRunId: string;
   try {
     apifyRunId = (await d.apify.startRun(INDEED_ACTOR, indeedInput({ ...job, datePosted: "14" }), { maxItems: job.limit, maxTotalChargeUsd: apifyChargeCap(plan) })).id;
@@ -209,7 +264,7 @@ export async function onApifyRunEvent(d: Deps, job: ApifyRunEvent): Promise<stri
   }
 
   const ok = run.status === "SUCCEEDED";
-  const social = row.job_type === "linkedin";
+  const li = row.job_type === "li_posts";
   const usage = await d.apify.usage();
   // Right after a run ends, chargedEventCounts can still show only the start event; the dataset's
   // item count is final (one item per board post, or per search results page), so the cost is
@@ -223,16 +278,16 @@ export async function onApifyRunEvent(d: Deps, job: ApifyRunEvent): Promise<stri
     await d.send(Q.apifyRunEvent, { apifyRunId: job.apifyRunId, recheck: Math.min(recheck - 1, 3) } satisfies ApifyRunEvent, { startAfter: RECHECK_SECONDS / 2 });
     return "waiting for final counts";
   }
-  const actual = social
-    ? Math.max(runCostUsd(run, SEARCH_PRICES), ok ? items * SEARCH_PRICES["search-page-scraped"] + SEARCH_PRICES["apify-actor-start"] : 0)
+  const actual = li
+    ? Math.max(runCostUsd(run, LI_PRICES), ok ? items * LI_PRICES.post + LI_PRICES["apify-actor-start"] : 0) // a comment costs what a post does
     : Math.max(runCostUsd(run, INDEED_PRICES), ok ? items * PLAN.pricePerItem + PLAN.startPrice : 0);
   // Claim, settle and enqueue the fetch in one transaction: a crash leaves the run 'running'
   // for the next poll, never 'fetching' with no fetch job.
   const claimed = await withTransaction(d.pool, async (c) => {
     if (!(await claimRun(c, row.id, ok ? "fetching" : "failed"))) return false;
     await settleApifyRun(c, { cycleStart: usage.cycleStart, reservedUsd: Number(row.estimated_cost_usd), actualUsd: actual, runId: row.id, ref: run.id });
-    if (ok && social) await d.send(Q.fetchSocial, { runId: row.id, datasetId: run.defaultDatasetId } satisfies FetchSocial, undefined, c);
-    else if (ok) await d.send(Q.fetchDataset, { runId: row.id, datasetId: run.defaultDatasetId, offset: 0 } satisfies FetchDataset, undefined, c);
+    if (ok && li) await d.send(Q.fetchLiRun, { runId: row.id, datasetId: run.defaultDatasetId } satisfies FetchLiRun, undefined, c);
+    else if (ok && row.job_type === "indeed") await d.send(Q.fetchDataset, { runId: row.id, datasetId: run.defaultDatasetId, offset: 0 } satisfies FetchDataset, undefined, c);
     return true;
   });
   if (!claimed) return "already handled";
@@ -283,44 +338,41 @@ export async function fetchDataset(d: Deps, job: FetchDataset): Promise<Partial<
   return counts;
 }
 
-// ── Social digest: LinkedIn posts via Google search (§4.1a) ─────────────────
-// start-social-run mirrors start-board-run: reserve the worst case, record the run before
-// starting it, and never start twice for one job key. Completion arrives through poll-runs.
-export async function startSocialRun(d: Deps, job: StartSocialRun, jobKey: string): Promise<{ started: string } | { deferred: true } | { skipped: string }> {
+// ── LinkedIn post search (§4.1d) ────────────────────────────────────────────
+// start-li-run mirrors start-board-run: reserve the worst case (every post and comment slot
+// filled), record the run and link it to its topic arms, never start twice for one job key.
+export async function startLiRun(d: Deps, job: StartLiRun, jobKey: string): Promise<{ started: string } | { deferred: true } | { skipped: string }> {
   const prior = await getRunByJobKey(d.pool, jobKey);
   if (prior?.apify_run_id) return { started: prior.apify_run_id };
   if (prior) {
     await setRunStatus(d.pool, prior.id, "failed");
     return { skipped: "unconfirmed earlier attempt" };
   }
-  // Rotation within the vertical: each run takes the next topics (§4.1a).
-  const runIndex = Number(
-    (await d.pool.query<{ n: string }>("select count(*) n from ingestion_runs where job_type = 'linkedin' and vertical = $1", [job.vertical])).rows[0]!.n,
-  );
-  const q = socialQuery(job.vertical, { keyword: job.keyword, runIndex });
-  const plan = { maxItems: job.pages, pricePerItem: SEARCH_PRICES["search-page-scraped"], startPrice: SEARCH_PRICES["apify-actor-start"] };
+  const plan = { maxItems: liItems({ ...job, topics: job.topics.length }), pricePerItem: LI_PRICES.post, startPrice: LI_PRICES["apify-actor-start"] };
   const worst = worstCaseApifyCost(plan);
   const usage = await d.apify.usage();
   const release = () =>
     d.pool.query("update spend_counters set total_usd = greatest(0, total_usd - $2) where key = $1", [apifyCycleKey(usage.cycleStart), worst]);
   await seedApifyCycle(d.pool, usage.cycleStart, usage.usageUsd, d.settings.apifyCycleCapUsd);
   if (!(await reserveApifyRun(d.pool, usage.cycleStart, worst, d.settings.apifyCycleCapUsd))) {
-    await d.send(Q.startSocialRun, job, { startAfter: DEFER_SECONDS });
+    await d.send(Q.startLiRun, job, { startAfter: DEFER_SECONDS });
     return { deferred: true };
   }
-  const runId = await createRun(d.pool, { jobKey, jobType: "linkedin", vertical: job.vertical, country: job.country, estimatedCostUsd: worst, queryTitle: q.label });
+  const runId = await createRun(d.pool, { jobKey, jobType: "li_posts", vertical: job.vertical, country: null, estimatedCostUsd: worst, queryTitle: job.topics.join(", ") });
   if (!runId) {
     await release();
     return { skipped: "concurrent attempt" };
   }
+  // The bandit learns from every run, rotation or Run now: one Medium topic arm per topic.
+  await linkRunArms(
+    d.pool,
+    runId,
+    job.topics.map((term) => ({ kind: "social" as const, vertical: job.vertical, country: LI_ARM_COUNTRY, term, group: "medium" as const })),
+  );
   let apifyRunId: string;
   try {
-    apifyRunId = (
-      await d.apify.startRun(SEARCH_ACTOR, linkedinSearchInput({ query: q.query, country: job.country, pages: job.pages }), {
-        maxItems: job.pages,
-        maxTotalChargeUsd: apifyChargeCap(plan, SEARCH_ACTOR_MIN_CAP),
-      })
-    ).id;
+    const input = liSearchInput({ topics: job.topics, posts: job.posts, comments: job.comments });
+    apifyRunId = (await d.apify.startRun(LI_POST_ACTOR, input, { maxItems: plan.maxItems, maxTotalChargeUsd: apifyChargeCap(plan) })).id;
   } catch (e) {
     await d.pool.query("delete from ingestion_runs where id = $1", [runId]);
     await release();
@@ -328,111 +380,119 @@ export async function startSocialRun(d: Deps, job: StartSocialRun, jobKey: strin
   }
   await recordApifyRun(d.pool, runId, apifyRunId);
   await d.send(Q.apifyRunEvent, { apifyRunId, recheck: RECHECKS } satisfies ApifyRunEvent, { startAfter: RECHECK_SECONDS });
-  d.log("social run started", { apifyRunId, vertical: job.vertical, topics: q.label, country: job.country, worst });
+  d.log("linkedin search started", { apifyRunId, topics: job.topics, posts: job.posts, comments: job.comments, worst });
   return { started: apifyRunId };
 }
 
-interface SearchPage {
-  organicResults?: { url?: string; title?: string; description?: string }[];
-}
+const LI_PAGE = 200;
+const LI_MAX_ITEMS = 2000;
 
-// One dataset item per results page. Each LinkedIn result: freshness from its activity id,
-// dedup, then recruiter wording; survivors go to extract-social. Free drops are only counted
-// (seen_items already stops a repeat); a post the AI reads gets a social_results row, kept for a
-// lead and, for 7 days, for an AI drop so the operator can check its judgement. The work-keyword half of the snippet gate does not
-// apply: the query already names the topic, and implied posts rarely use job-ad wording (the
-// first topic run, 2026-11-06, lost 8 of 10 results there). The AI judges the meaning instead.
-export async function fetchSocial(d: Deps, job: FetchSocial): Promise<Partial<Record<DropCounter, number>>> {
-  const run = (await d.pool.query<{ country: "in" | "ae" | "us"; vertical: VerticalSlug | null }>("select country, vertical from ingestion_runs where id = $1", [job.runId]))
-    .rows[0];
-  if (!run) throw new Error(`ingestion run ${job.runId} not found`);
-  const pages = await d.apify.datasetItems<SearchPage>(job.datasetId, 0, 10);
-  const results = pages.flatMap((p) => p.organicResults ?? []);
-  const counts: Partial<Record<DropCounter, number>> = { raw_items_ingested: results.length };
-  const inc = (k: DropCounter) => (counts[k] = (counts[k] ?? 0) + 1);
-  for (const r of results) {
-    const li = r.url ? linkedinPost(r.url) : null;
-    const snippet = (r.description ?? "").trim();
-    const base = { runId: job.runId, url: r.url ?? "", snippet, postedAt: li?.postedAt ?? null };
-    if (!li) {
-      inc("dropped_trie_count"); // not a LinkedIn post (a profile, an article, another site)
-      continue;
-    }
-    if (!checkFreshness(li.postedAt, d.now(), true).fresh) {
-      inc("dropped_stale_count");
-      continue;
-    }
-    const text = `${r.title ?? ""}\n${snippet}`.slice(0, 2000);
-    const gate = gateSnippet(text, run.vertical);
-    const naturalId = `post:linkedin:${li.id}`;
-    const outcome = await withTransaction(d.pool, async (c): Promise<DropCounter | "sent"> => {
-      if (!(await markSeen(c, naturalId))) return "dropped_dedup_count";
-      if (!gate.pass && gate.reason === "recruiter") return "dropped_recruiter_count";
-      await recordSocialResult(c, { ...base, outcome: "checking" });
-      const payload: ExtractSocial = {
-        runId: job.runId,
-        country: run.country,
-        vertical: run.vertical,
-        naturalId,
-        url: r.url!,
-        text,
-        snippet: snippet.slice(0, 2000),
-        postedAt: li.postedAt.toISOString(),
-        founderDependency: gate.pass && gate.founderDependency,
-      };
-      await d.send(Q.extractSocial, payload, undefined, c);
-      return "sent";
-    });
-    if (outcome !== "sent") inc(outcome);
+// Posts and comments arrive as separate items. Posts older than 21 days are dropped (§4.3; the
+// actor's nearest window is a month); the rest are saved with their comments and each gets a read.
+export async function fetchLiRun(d: Deps, job: FetchLiRun): Promise<Partial<Record<DropCounter, number>>> {
+  const items: unknown[] = [];
+  for (let offset = 0; offset < LI_MAX_ITEMS; offset += LI_PAGE) {
+    const page = await d.apify.datasetItems<unknown>(job.datasetId, offset, LI_PAGE);
+    items.push(...page);
+    if (page.length < LI_PAGE) break;
   }
+  const { posts, comments, skipped } = mapLiItems(items);
+  const fresh = posts.filter((p) => checkFreshness(p.postedAt, d.now(), true).fresh);
+  const counts: Partial<Record<DropCounter, number>> = {
+    raw_items_ingested: posts.length,
+    dropped_stale_count: posts.length - fresh.length,
+    dropped_trie_count: skipped,
+  };
+  await withTransaction(d.pool, async (c) => {
+    const ids = await saveLiItems(c, job.runId, fresh, comments);
+    for (const liPostId of ids) await d.send(Q.readLiPost, { liPostId } satisfies ReadLiPost, undefined, c);
+  });
   await bumpCounters(d.pool, job.runId, counts);
   await setRunStatus(d.pool, job.runId, "done");
   return counts;
 }
 
-// Author check (Q59): only the business's own people showing their own manual work — as a
-// complaint (suffering), in an upbeat post (implied) or in how they solved it (solved) — with the
-// company named. Then the same path as a job post.
-const OWN_AUTHORS = new Set(["founder_owner", "employee", "company_page"]);
-const KEPT_STANCES = new Set(["suffering", "implied", "solved"]);
+// One AI call per post, with its comments: the pains, who wrote it, their company and market, and
+// for each comment whether it shares the pain and what is critical in it. A post that passes the
+// card gate (liCardGate) goes on to card-li-post.
+export async function readLiPost(d: Deps, job: ReadLiPost): Promise<string> {
+  const post = await liPostToRead(d.pool, job.liPostId, LI_MAX_COMMENTS);
+  if (!post) return "post gone";
+  if (post.status !== "reading") return "already read";
+  const req = buildLiRead(
+    { text: post.body, authorHeadline: post.authorHeadline, authorType: post.authorType },
+    post.comments.map((c) => ({ text: c.body, headline: c.headline, actorType: c.actorType })),
+  );
+  const out = await d.llm.json("extraction", req).catch(async (e: unknown) => {
+    // Invalid output after the client's retry is final: stop showing it as being read.
+    if ((e as { retryable?: unknown }).retryable === false) await markLiError(d.pool, post.id);
+    throw e;
+  });
+  const gate = liCardGate(out.data);
+  await withTransaction(d.pool, async (c) => {
+    await saveLiRead(c, post.id, out.data, post.comments, gate.ok ? "checking" : gate.outcome);
+    if (gate.ok) await d.send(Q.cardLiPost, { liPostId: post.id } satisfies CardLiPost, undefined, c);
+  });
+  const shared = out.data.comments.filter((k) => k.resonates).length;
+  return out.data.has_pain ? `pain: ${out.data.pains.length}, ${shared} comments share it, card: ${gate.ok ? "checking" : gate.outcome}` : "no pain";
+}
 
-export async function extractSocial(d: Deps, job: ExtractSocial): Promise<string> {
-  const out = await d.llm.json("extraction", buildSocialExtraction({ url: job.url, text: job.text }));
-  const si = out.data;
-  const verdict = (outcome: SocialOutcome) =>
-    setSocialOutcome(d.pool, { runId: job.runId, url: job.url, outcome, authorRelation: si.author_relation, stance: si.stance, symptom: si.verified_symptom });
-  if (!si.author_relation || !OWN_AUTHORS.has(si.author_relation) || !si.stance || !KEPT_STANCES.has(si.stance)) {
-    await verdict("stance");
-    return drop(d, job.runId, "dropped_stance_count");
+// A kept pain post becomes a card on the same path as a job post (fit → size → resolve → card).
+// The read's author check stands; this call only fills the card. A post already carded (found
+// by another topic, or by the Google digest before it) costs no second call.
+export async function cardLiPost(d: Deps, job: CardLiPost): Promise<string> {
+  const p = await liPostForCard(d.pool, job.liPostId);
+  if (!p) return "post gone";
+  if (p.cardOutcome !== "checking") return "already decided";
+  const gate = liCardGate({
+    has_pain: !!p.hasPain,
+    author_relation: p.authorRelation as LiRead["author_relation"],
+    stance: p.stance as LiRead["stance"],
+    author_company: p.authorCompany,
+    author_country: (p.authorCountry ?? "unknown") as LiRead["author_country"],
+  });
+  if (!gate.ok) {
+    await setLiCardOutcome(d.pool, p.id, gate.outcome);
+    return gate.outcome;
   }
-  if (!si.company_name?.trim()) {
-    await verdict("no_company");
-    return drop(d, job.runId, "dropped_unresolved_count");
+  const naturalId = `post:linkedin:${p.postId}`;
+  if ((await d.pool.query("select 1 from challenges where natural_id = $1", [naturalId])).rowCount) {
+    await setLiCardOutcome(d.pool, p.id, "duplicate");
+    return "duplicate";
   }
-  const { company_name, vertical, ...extracted } = si;
+  const req = buildLiCardExtraction({ text: p.body, authorHeadline: p.authorHeadline, company: gate.company, authorRelation: p.authorRelation!, stance: p.stance! });
+  const out = await d.llm.json("extraction", req).catch(async (e: unknown) => {
+    if ((e as { retryable?: unknown }).retryable === false) await setLiCardOutcome(d.pool, p.id, "ai_error");
+    throw e;
+  });
+  const { vertical, ...extracted } = out.data;
+  // The read's verdict on the author wins over the card call's copy of it.
+  const si: StructuredIntelligence = { ...extracted, author_relation: p.authorRelation as AuthorRelation, stance: p.stance as StructuredIntelligence["stance"] };
   // Solved with software: they have tools but nothing joining them up, so pitch Company OS (§1.1).
-  const rest = si.stance === "solved" && si.solved_how === "with_software" ? { ...extracted, product_layer: "company_os" as const } : extracted;
+  const rest = si.stance === "solved" && si.solved_how === "with_software" ? { ...si, product_layer: "company_os" as const } : si;
+  const text = p.body.slice(0, 2000);
+  const gated = gateSnippet(text, (vertical ?? p.vertical) as VerticalSlug | null);
   const asPost: ExtractLlm = {
-    runId: job.runId,
-    vertical: vertical ?? job.vertical,
-    founderDependency: job.founderDependency,
+    runId: p.runId,
+    vertical: (vertical ?? p.vertical) as VerticalSlug | null,
+    founderDependency: gated.pass && gated.founderDependency,
     source: "linkedin_post",
-    author: si.author_relation as AuthorRelation,
+    author: p.authorRelation as AuthorRelation,
     post: {
-      naturalId: job.naturalId,
-      url: job.url,
-      title: "LinkedIn post", // the result title is the author's name: never stored
-      company: company_name.trim(),
-      description: job.snippet,
-      postedAt: job.postedAt,
+      naturalId,
+      url: p.url,
+      title: "LinkedIn post",
+      company: gate.company,
+      description: text,
+      postedAt: p.postedAt ? p.postedAt.toISOString() : null,
       city: null,
-      country: job.country,
+      country: gate.country,
       boardWebsite: null,
       boardEmployeeBand: null,
     },
   };
   const result = await toCard(d, asPost, rest, out.model);
-  await verdict(result === "dropped_no_fit_count" ? "no_fit" : result === "dropped_size_count" ? "too_large" : "card");
+  await setLiCardOutcome(d.pool, p.id, result === "dropped_no_fit_count" ? "no_fit" : result === "dropped_size_count" ? "too_large" : "card");
   return result;
 }
 
@@ -506,7 +566,7 @@ async function persistCard(d: Deps, x: ResolvePayload, domain: string | null): P
   if (!size.keep) throw new Error("persistCard: domain age never drops a company");
   const w = weightsFor(job.source, job.author, si.stance, si.solved_how);
   const B = blastRadius(si.blast_radius, job.founderDependency);
-  // LinkedIn: the snippet only (§4.1a); its title is the author's name, so it is never stored.
+  // LinkedIn: the post text only (§4.1d); its title is a placeholder, never the author's name.
   const evidence = job.source === "linkedin_post" ? post.description : `${post.title}\n\n${post.description}`;
   const tier = urgencyTier({
     sourceType: job.source,
@@ -543,6 +603,7 @@ async function persistCard(d: Deps, x: ResolvePayload, domain: string | null): P
       llmModel: x.model,
       authorRelation: job.author,
       urgencyTier: tier,
+      runId: job.runId,
     });
     // Always: a website attached later can fold another card's challenges into this company.
     await recomputeCompanyScore(c, companyId);
@@ -580,13 +641,28 @@ export async function resolveBatch(d: Deps): Promise<{ stale: number; cached: nu
       if (quota <= 0) continue;
       quota--;
       stats.searched++;
-      const out = await d.llm.json("resolve", buildResolve({ company: row.company_name, city: row.city, country: row.country }));
+      // §5.1a: the company-check agent searches, opens pages and judges the company.
+      const check = await runCompanyCheck(
+        { company: row.company_name, city: row.city, country: row.country, vertical: payload.job.vertical },
+        {
+          llm: d.llm,
+          fetchText: async (url) => {
+            const page = await d.fetchPage(url);
+            return page ? { url: page.url, text: pageText(page.html) } : null;
+          },
+        },
+      );
       await markSearched(d.pool, row.natural_id, now);
-      domain = acceptResolved(out.data, out.citations ?? []) ?? (await checkHomepages(d, homepageCandidates(out.data, out.citations ?? [], row.company_name), row));
+      domain = check.domain ?? (await checkHomepages(d, homepageCandidates(check.lastPick, check.citations, row.company_name), row));
       await cacheDomain(d.pool, row.cache_key, domain); // before the card: a crash here never pays twice
-    } else stats.cached++;
+      await persistCard(d, payload, domain);
+      const { citations: _c, lastPick: _p, ...found } = check;
+      await saveCompanyCheck(d.pool, { domain, nameKey: `${row.country}:${row.cache_key}` }, { ...found, domain, checkedAt: now.toISOString() });
+    } else {
+      stats.cached++;
+      await persistCard(d, payload, domain);
+    }
 
-    await persistCard(d, payload, domain);
     if (await finishResolve(d.pool, row.natural_id, domain ? "resolved" : "unresolved", now)) {
       if (domain) stats.resolved++;
       else stats.noWebsite++;
@@ -679,6 +755,7 @@ export async function pollRuns(d: Deps): Promise<number> {
   const runs = await unfinishedRuns(d.pool, 60);
   for (const r of runs) await d.send(Q.apifyRunEvent, { apifyRunId: r.apify_run_id, recheck: 0 } satisfies ApifyRunEvent, { singletonKey: r.apify_run_id });
   await purgeSocialResults(d.pool);
+  await purgeLinkedin(d.pool);
   return runs.length;
 }
 

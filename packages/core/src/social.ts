@@ -1,14 +1,14 @@
-// Social digest, LinkedIn half (PRD §4.1a): public LinkedIn posts found through Google search
-// (site:linkedin.com/posts), snippet only — LinkedIn pages are never fetched. Reddit waits for
-// the Sprint 4 trends track: a 2026-11-06 sample gave 0 posts naming a company.
+// Social topics (PRD §4.1a, §4.1d): the work topics LinkedIn post search runs on. The Google
+// digest that first used them (site:linkedin.com/posts snippets) was retired on 2026-11-08: the
+// LinkedIn search reads the full post and its comments.
 import type { VerticalSlug } from "./verticals.ts";
 
 // Topic search (§4.1a, revised 2026-11-06): the query names a work topic, never a phrasing, so a
 // post is found however it starts — a complaint, a hiring post, a milestone. The AI judges the
 // meaning afterwards (stance suffering or implied). Topics are short post words boiled down from
 // each vertical's labelled keywords (§6.3, atoms.ts): job-ad wording ("accounts payable
-// operations") is not how people post. 20 per vertical, 4 per run: 5 runs before a repeat. No
-// one-word topics that name other things ("dispatch" matched newsletters, 2026-11-06).
+// operations") is not how people post. No one-word topics that name other things ("dispatch"
+// matched newsletters, 2026-11-06).
 export const SOCIAL_TOPICS: Record<VerticalSlug, readonly string[]> = {
   real_estate: ["rent collection", "lease renewals", "tenant screening", "maintenance requests", "property inspections", "tenant follow-ups", "leasing paperwork", "rent reminders", "move-in checklists", "closing documents", "listing updates", "owner statements", "property admin", "security deposits", "rent rolls", "vacancy tracking", "Trakheesi", "Ejari", "escrow paperwork", "showing schedules"],
   logistics: ["shipment tracking", "customs paperwork", "booking confirmations", "dispatcher", "bills of lading", "freight invoices", "track shipments", "schedule pickups", "proof of delivery", "rate confirmations", "load board", "customs clearance", "detention charges", "carrier payments", "delivery updates", "freight quotes", "shipping documents", "container tracking", "trucking paperwork", "dispatching loads"],
@@ -28,50 +28,5 @@ export const SOCIAL_TOPICS: Record<VerticalSlug, readonly string[]> = {
   automotive: ["service advisors", "warranty claims", "repair orders", "parts orders", "estimates", "appointment booking", "dealership paperwork", "deal jackets", "service reminders", "vehicle inspections", "parts inventory", "customer follow-ups", "service scheduling", "DMS", "finance paperwork", "vehicle registrations", "trade-in appraisals", "service bookings", "workshop scheduling", "job cards"],
 };
 
-// Measured 2026-11-06: a plain "manually … invoices" query returned 10/10 vendor posts, so every
-// query excludes the words vendors and newsletters use. "-hiring" is not excluded: a founder hiring for desk
-// work is an implied signal, and the snippet gate drops recruiter wording.
-const NO_VENDOR = "-automation -automate -AI -software -platform -solution -demo -webinar -newsletter -edition -podcast";
-export const TOPICS_PER_RUN = 4;
-
 // Free-text keyword from Run now: plain words only, so it cannot add search operators.
 export const SOCIAL_KEYWORD = /^[\p{L}\p{N}][\p{L}\p{N} &'.-]{0,39}$/u;
-
-// One Google query: a keyword the operator typed, or the vertical's next topics in rotation
-// (`runIndex` = earlier social runs for this vertical, so each run moves on to new topics).
-export function socialQuery(vertical: VerticalSlug, opts: { keyword?: string | null; runIndex?: number } = {}): { query: string; label: string } {
-  const quote = (t: string) => `"${t.replace(/"/g, "")}"`;
-  let terms: string[];
-  if (opts.keyword?.trim()) terms = [opts.keyword.trim()];
-  else {
-    const all = SOCIAL_TOPICS[vertical];
-    const start = ((opts.runIndex ?? 0) * TOPICS_PER_RUN) % all.length;
-    terms = Array.from({ length: Math.min(TOPICS_PER_RUN, all.length) }, (_, i) => all[(start + i) % all.length]!);
-  }
-  return { query: `site:linkedin.com/posts (${terms.map(quote).join(" OR ")}) ${NO_VENDOR}`, label: terms.join(", ") };
-}
-
-// Google search actor (verified 2026-11-06): $0.0045 per results page (~10 results) on the FREE
-// plan, $0.00005 per run. Apify rejects a run cap below $0.50 for this actor.
-export const SEARCH_PRICES = { "search-page-scraped": 0.0045, "apify-actor-start": 0.00005 };
-export const SEARCH_ACTOR = "apify/google-search-scraper";
-export const SEARCH_ACTOR_MIN_CAP = 0.5;
-
-export function linkedinSearchInput(x: { query: string; country: string; pages: number }) {
-  return { queries: x.query, quickDateRange: "d21", maxPagesPerQuery: x.pages, countryCode: x.country, saveHtmlToKeyValueStore: false };
-}
-
-// linkedin.com/posts/<slug>_<words>-activity-<19 digits>-<suffix>. The activity id carries the
-// post time (id >> 22 = Unix ms), so freshness is checked without opening the post.
-export function linkedinPost(url: string): { id: string; postedAt: Date; slug: string } | null {
-  let u: URL;
-  try {
-    u = new URL(url);
-  } catch {
-    return null;
-  }
-  if (u.protocol !== "https:" || !/(^|\.)linkedin\.com$/.test(u.hostname) || !u.pathname.startsWith("/posts/")) return null;
-  const m = u.pathname.match(/^\/posts\/([^/_]+)_[^/]*activity-(\d{19})/);
-  if (!m) return null;
-  return { id: m[2]!, postedAt: new Date(Number(BigInt(m[2]!) >> 22n)), slug: m[1]! };
-}

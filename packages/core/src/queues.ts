@@ -1,6 +1,7 @@
 // pg-boss queue names and job payloads (PRD §5.2) — the contract between web and worker.
 import { z } from "zod";
 import { AuthorRelation, StructuredIntelligence } from "./contracts.ts";
+import { LI_MAX_COMMENTS, LI_MAX_POSTS, LI_MAX_TOPICS } from "./liSearch.ts";
 import { SOCIAL_KEYWORD } from "./social.ts";
 import { VerticalSlug } from "./verticals.ts";
 
@@ -13,9 +14,10 @@ export const Q = {
   sniffSeeds: "sniff-seeds",
   sniffDomain: "sniff-domain",
   ingestRotation: "ingest-rotation",
-  startSocialRun: "start-social-run",
-  fetchSocial: "fetch-social",
-  extractSocial: "extract-social",
+  startLiRun: "start-li-run",
+  fetchLiRun: "fetch-li-run",
+  readLiPost: "read-li-post",
+  cardLiPost: "card-li-post",
   pollRuns: "poll-runs",
   reconcileApify: "reconcile-apify",
   deadLetter: "dead-letter",
@@ -75,30 +77,6 @@ export const ExtractLlm = z.object({
 export type ExtractLlm = z.infer<typeof ExtractLlm>;
 export type ExtractLlmInput = z.input<typeof ExtractLlm>;
 
-export const StartSocialRun = z.object({
-  vertical: VerticalSlug,
-  keyword: z.string().regex(SOCIAL_KEYWORD).nullable().default(null), // else the vertical's next topics
-  country: CountryCode, // Google results country (gl)
-  pages: z.number().int().min(1).max(3), // ~10 results each
-});
-export type StartSocialRun = z.infer<typeof StartSocialRun>;
-
-export const FetchSocial = z.object({ runId: z.uuid(), datasetId: z.string().regex(/^[A-Za-z0-9]{5,40}$/) });
-export type FetchSocial = z.infer<typeof FetchSocial>;
-
-export const ExtractSocial = z.object({
-  runId: z.uuid(),
-  country: CountryCode,
-  vertical: VerticalSlug.nullable().default(null), // the run's vertical: the gate's atoms, and the card's when the AI gives none
-  naturalId: z.string(),
-  url: z.string(),
-  text: z.string().max(2000), // title + snippet from the search result, never the page (for the LLM)
-  snippet: z.string().max(2000), // snippet only: the evidence shown on the card (titles carry author names)
-  postedAt: z.iso.datetime(),
-  founderDependency: z.boolean(),
-});
-export type ExtractSocial = z.infer<typeof ExtractSocial>;
-
 // Stored in resolve_queue.payload: everything needed to make the card once a website is found.
 export const ResolvePayload = z.object({ job: ExtractLlm, si: StructuredIntelligence, model: z.string() });
 export type ResolvePayload = z.infer<typeof ResolvePayload>;
@@ -106,3 +84,24 @@ export type ResolvePayload = z.infer<typeof ResolvePayload>;
 // One website sniff per seed (§5.4). The worker reads the domain and company from seed_urls.
 export const SniffDomain = z.object({ seedId: z.uuid() });
 export type SniffDomain = z.infer<typeof SniffDomain>;
+
+// LinkedIn post search (§4.1d): one or more topics (Run now, or the rotation's picks), posts with
+// their comments. A job queued before topics existed carries one `topic`.
+export const StartLiRun = z.preprocess(
+  (x) => (x && typeof x === "object" && "topic" in x && !("topics" in x) ? { ...x, topics: [(x as { topic: unknown }).topic] } : x),
+  z.object({
+    vertical: VerticalSlug,
+    topics: z.array(z.string().regex(SOCIAL_KEYWORD)).min(1).max(LI_MAX_TOPICS), // plain words only: no search operators
+    posts: z.number().int().min(1).max(LI_MAX_POSTS), // per topic
+    comments: z.number().int().min(0).max(LI_MAX_COMMENTS),
+  }),
+);
+export type StartLiRun = z.infer<typeof StartLiRun>;
+
+export const FetchLiRun = z.object({ runId: z.uuid(), datasetId: z.string().regex(/^[A-Za-z0-9]{5,40}$/) });
+export type FetchLiRun = z.infer<typeof FetchLiRun>;
+
+export const ReadLiPost = z.object({ liPostId: z.uuid() });
+export type ReadLiPost = z.infer<typeof ReadLiPost>;
+export const CardLiPost = ReadLiPost;
+export type CardLiPost = ReadLiPost;

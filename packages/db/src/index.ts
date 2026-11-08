@@ -5,3 +5,5 @@ export * from "./ingestion.ts";
 export * from "./resolve.ts";
 export * from "./sniff.ts";
 export * from "./social.ts";
+export * from "./arms.ts";
+export * from "./linkedin.ts";

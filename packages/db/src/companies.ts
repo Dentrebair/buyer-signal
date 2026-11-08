@@ -98,14 +98,15 @@ export interface ChallengeInsert {
   llmModel: string | null;
   authorRelation?: AuthorRelation | null;
   urgencyTier?: "high" | "medium" | "low" | null;
+  runId?: string | null; // the ingestion run that found it (§4.1c: rejections count against its search)
 }
 
 // Safe to run twice: natural_id is unique (§5.3a). Returns false when it already existed.
 export async function insertChallenge(c: pg.PoolClient, x: ChallengeInsert): Promise<boolean> {
   const r = await c.query(
     `insert into challenges (company_id, source_type, natural_id, source_url, evidence_confidence, buying_intent,
-       blast_radius, signal_score, department, posted_at, evidence_snippet, structured_intelligence, llm_model, author_relation, urgency_tier)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+       blast_radius, signal_score, department, posted_at, evidence_snippet, structured_intelligence, llm_model, author_relation, urgency_tier, run_id)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
      on conflict (natural_id) do nothing`,
     [
       x.companyId,
@@ -123,6 +124,7 @@ export async function insertChallenge(c: pg.PoolClient, x: ChallengeInsert): Pro
       x.llmModel,
       x.authorRelation ?? null,
       x.urgencyTier ?? null,
+      x.runId ?? null,
     ],
   );
   return r.rowCount === 1;
@@ -158,4 +160,10 @@ export async function recomputeCompanyScore(c: pg.PoolClient, companyId: string)
 // New domain → website sniff later (§5.1 step 7, §5.4). Safe to run twice.
 export async function insertSeedUrl(c: pg.PoolClient, domain: string, companyId: string, origin: "job_post" | "linkedin_post" | "social_post" | "inbound") {
   await c.query("insert into seed_urls (domain, company_id, origin) values ($1, $2, $3) on conflict (domain) do nothing", [domain, companyId, origin]);
+}
+
+// Company-check agent result (PRD §5.1a), on the company the card was filed under.
+export async function saveCompanyCheck(db: pg.Pool | pg.PoolClient, at: { domain: string | null; nameKey: string }, check: object): Promise<void> {
+  if (at.domain) await db.query("update companies set company_check = $2 where domain = $1", [at.domain, check]);
+  else await db.query("update companies set company_check = $2 where name_key = $1 and domain is null", [at.nameKey, check]);
 }

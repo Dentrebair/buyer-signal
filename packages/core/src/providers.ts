@@ -31,6 +31,7 @@ export interface LlmRequest<T> {
   jsonSchema: object;
   parse: (raw: unknown) => T;
   webSearch?: { maxResults: number }; // let the model search the web first (resolve, §5.1 step 5)
+  maxTokens?: number; // output budget, when the client default (1,200) is too small or too large
 }
 
 export interface LlmClient {
