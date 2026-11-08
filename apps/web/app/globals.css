@@ -717,3 +717,11 @@ g.is-active path { opacity: 0.8; }
 .draft-subject { margin: 0; font-weight: 600; color: var(--color-ink); }
 .draft-body { margin: 0; white-space: pre-wrap; color: var(--color-ink-2); max-width: 70ch; }
 
+/* Badges (§10.1): icon + words, amber for care, green for new evidence. */
+.badge-tag { display: inline-flex; align-items: center; gap: var(--space-3xs); padding: var(--space-3xs) var(--space-2xs); border-radius: var(--radius-tag); font-size: var(--text-xs); font-weight: 600; background: var(--opt-amber-bg); color: var(--opt-amber); }
+.badge-tag.badge-good { background: var(--opt-green-bg); color: var(--opt-green); }
+/* Proof Viewer (§10.2): matched phrases marked in the post's text. */
+.ev-mark { background: color-mix(in oklab, var(--color-accent) 18%, transparent); color: var(--color-ink); border-radius: 2px; padding: 0 1px; }
+.ev-proof-note { margin: var(--space-2xs) 0; font-size: var(--text-xs); color: var(--color-muted); }
+.ev-pains { display: flex; flex-wrap: wrap; gap: var(--space-2xs); }
+

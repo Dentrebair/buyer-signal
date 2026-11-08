@@ -79,6 +79,7 @@ import {
   LI_TOPICS_PER_RUN,
   buildLiCardExtraction,
   liCardGate,
+  painTypesOf,
   DRIFT_METRICS,
   type DriftMetric,
   compareDrift,
@@ -678,12 +679,13 @@ async function persistCard(d: Deps, x: ResolvePayload, domain: string | null): P
   const B = blastRadius(si.blast_radius, job.founderDependency);
   // LinkedIn: the post text only (§4.1d); its title is a placeholder, never the author's name.
   const evidence = job.source === "linkedin_post" ? post.description : `${post.title}\n\n${post.description}`;
+  const matches = matchAtoms(evidence, job.vertical);
   const tier = urgencyTier({
     sourceType: job.source,
     authorRelation: job.author,
     title: job.source === "job_post" ? post.title : null,
     text: evidence,
-    matches: matchAtoms(evidence, job.vertical),
+    matches,
   });
   await withTransaction(d.pool, async (c) => {
     const companyId = await upsertCompany(c, {
@@ -714,6 +716,7 @@ async function persistCard(d: Deps, x: ResolvePayload, domain: string | null): P
       authorRelation: job.author,
       urgencyTier: tier,
       runId: job.runId,
+      painTypes: painTypesOf(job.source, matches.map((m) => m.category)),
     });
     // Always: a website attached later can fold another card's challenges into this company.
     await recomputeCompanyScore(c, companyId);

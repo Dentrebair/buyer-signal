@@ -27,6 +27,7 @@
     "sniff:test": "node --env-file=.env.local --import tsx scripts/sniff-test.ts",
     "mine": "node --env-file=.env.local --import tsx scripts/mine.ts",
     "spot-check": "node --env-file=.env.local --import tsx scripts/spot-check.ts",
+    "backfill:pain-types": "node --env-file=.env.local --import tsx scripts/backfill-pain-types.ts",
     "tier:backfill": "node --env-file=.env.local --import tsx scripts/tier-backfill.ts"
   },
   "devDependencies": {

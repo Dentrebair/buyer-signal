@@ -22,6 +22,7 @@ export * from "./archive.ts";
 export * from "./leakCheck.ts";
 export * from "./alerts.ts";
 export * from "./drafts.ts";
+export * from "./painTypes.ts";
 export * from "./evals.ts";
 export * from "./techstack.ts";
 export * from "./website.ts";

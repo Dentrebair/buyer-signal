@@ -120,21 +120,59 @@ export function findAtoms(trie: Trie, text: string): Set<string> {
 }
 
 // Atoms found, longest match first where two overlap, each atom once.
-export function matchTrie(trie: Trie, text: string): GateMatch[] {
-  const found = scan(trie, words(text)).sort((x, y) => y.end - y.start - (x.end - x.start) || x.start - y.start);
+// Longest match first; overlapping shorter ones are dropped (an atom inside a longer one counts once).
+function pick(found: Found[]): Found[] {
   const taken = new Set<number>();
-  const seen = new Set<string>();
-  const out: GateMatch[] = [];
-  for (const f of found) {
+  const out: Found[] = [];
+  for (const f of [...found].sort((x, y) => y.end - y.start - (x.end - x.start) || x.start - y.start)) {
     let free = true;
     for (let k = f.start; k < f.end; k++) if (taken.has(k)) free = false;
     if (!free) continue;
     for (let k = f.start; k < f.end; k++) taken.add(k);
+    out.push(f);
+  }
+  return out;
+}
+
+export function matchTrie(trie: Trie, text: string): GateMatch[] {
+  const seen = new Set<string>();
+  const out: GateMatch[] = [];
+  for (const f of pick(scan(trie, words(text)))) {
     if (seen.has(f.a.atom)) continue;
     seen.add(f.a.atom);
     out.push({ category: f.a.category, atom: f.a.atom });
   }
   return out;
+}
+
+// Words with their place in the original text, split exactly as words() splits them: letters and
+// digits, apostrophes dropped inside a word ("don't" → "dont").
+function wordSpans(text: string): { start: number; end: number }[] {
+  const out: { start: number; end: number }[] = [];
+  let start = -1;
+  for (let i = 0; i <= text.length; i++) {
+    const ch = i < text.length ? text[i]!.toLowerCase() : " ";
+    if (/[a-z0-9]/.test(ch)) {
+      if (start < 0) start = i;
+    } else if (!(start >= 0 && /[‘’']/.test(ch))) {
+      if (start >= 0) out.push({ start, end: i });
+      start = -1;
+    }
+  }
+  return out;
+}
+
+// Proof Viewer (§10.2): every matched phrase in the text, by character position, for highlighting.
+export interface MatchSpan extends GateMatch {
+  start: number;
+  end: number;
+}
+export function matchSpans(text: string, vertical?: VerticalSlug | null, trie = shippedTrie(vertical)): MatchSpan[] {
+  const spans = wordSpans(text);
+  return pick(scan(trie, words(text)))
+    .map((f) => ({ category: f.a.category, atom: f.a.atom, start: spans[f.start]?.start ?? 0, end: spans[f.end - 1]?.end ?? 0 }))
+    .filter((m) => m.end > m.start)
+    .sort((a, b) => a.start - b.start);
 }
 
 const tries = new Map<VerticalSlug | "core", Trie>();

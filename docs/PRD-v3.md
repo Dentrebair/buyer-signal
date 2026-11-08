@@ -1382,6 +1382,17 @@ resurfacing rules, `/radar` telemetry.
 a company with the mouse alone; badges follow §10.1 rules; `/radar` spend matches provider
 dashboards within 10 %.
 
+*Status, 2026-11-08: built except the Teardown card (not specified beyond its name; the dossier's
+Website audit covers the 4-Gate findings).* Drafts (§9); badges on rows and in the dossier with a
+Badge filter: Single signal, Employee post: don't quote (new), Client-rendered site, New evidence
+(new; a resurfaced rejection, shown green); Snippet only retired with the Google digest;
+Unverified inbound waits for `/roast`. Pain-type filter: each challenge stores `pain_types` from its
+matched keyword categories (manual desk work, copying between systems, paper and documents,
+scattered knowledge; website findings: website or WhatsApp; migration 0026, backfilled). Proof
+Viewer: "Read the post" marks every matched phrase in the post's own text (`matchSpans`, the
+filter's own trie and longest-match rule), with its category on hover; employee posts stay
+unquoted. Mark as sent / Reject, resurfacing and `/radar` telemetry were built earlier.
+
 **Sprint 4 — stretch.**
 `/roast` with all guards + Realtime; Reddit anonymous track, embeddings, clustering,
 `/trends`; fuller telemetry.

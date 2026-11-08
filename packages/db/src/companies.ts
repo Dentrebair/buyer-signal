@@ -8,7 +8,10 @@ import {
   type SizeTier,
   type SourceType,
   type StructuredIntelligence,
+  type PainType,
   companyScore,
+  matchAtoms,
+  painTypesOf,
 } from "@bs/core";
 
 export interface CompanyUpsert {
@@ -99,14 +102,16 @@ export interface ChallengeInsert {
   authorRelation?: AuthorRelation | null;
   urgencyTier?: "high" | "medium" | "low" | null;
   runId?: string | null; // the ingestion run that found it (§4.1c: rejections count against its search)
+  painTypes?: PainType[]; // §10.1 filter; when absent, read from the evidence with the shared keyword list
 }
 
 // Safe to run twice: natural_id is unique (§5.3a). Returns false when it already existed.
 export async function insertChallenge(c: pg.PoolClient, x: ChallengeInsert): Promise<boolean> {
   const r = await c.query(
     `insert into challenges (company_id, source_type, natural_id, source_url, evidence_confidence, buying_intent,
-       blast_radius, signal_score, department, posted_at, evidence_snippet, structured_intelligence, llm_model, author_relation, urgency_tier, run_id)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+       blast_radius, signal_score, department, posted_at, evidence_snippet, structured_intelligence, llm_model, author_relation, urgency_tier, run_id,
+       pain_types)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
      on conflict (natural_id) do nothing`,
     [
       x.companyId,
@@ -125,6 +130,7 @@ export async function insertChallenge(c: pg.PoolClient, x: ChallengeInsert): Pro
       x.authorRelation ?? null,
       x.urgencyTier ?? null,
       x.runId ?? null,
+      x.painTypes ?? painTypesOf(x.sourceType, matchAtoms(x.evidenceSnippet).map((m) => m.category)),
     ],
   );
   return r.rowCount === 1;

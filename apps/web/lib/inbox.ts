@@ -1,7 +1,8 @@
 // Inbox queries (PRD §10.1). Queues and filters come from the URL so a view can be bookmarked.
 import type { OutreachDrafts, ScoreBreakdown, SizeTier, SourceFamily, SourceType, StructuredIntelligence } from "@bs/core";
 import type { AuditCompany } from "@/components/WebsiteAudit.tsx";
-import { FULL_AUTOMATION_PCT, PRODUCT_LAYERS, SCOPES, type Scope, URGENCY_TIERS, type UrgencyTier } from "./labels.ts";
+import { PAIN_TYPES, type PainType } from "@bs/core/painTypes";
+import { BADGES, type Badge, FULL_AUTOMATION_PCT, PRODUCT_LAYERS, SCOPES, type Scope, URGENCY_TIERS, type UrgencyTier } from "./labels.ts";
 import { asOperator } from "./operator.ts";
 
 export const QUEUES = ["triage", "nurture", "sent", "rejected"] as const;
@@ -16,6 +17,8 @@ export interface View {
   scope: Scope | null;
   urgency: UrgencyTier | null;
   layer: (typeof PRODUCT_LAYERS)[number] | null;
+  pain: PainType | null;
+  badge: Badge | null;
   id: string | null;
 }
 
@@ -32,6 +35,8 @@ export function parseView(sp: Record<string, string | string[] | undefined>): Vi
     scope: SCOPES.find((s) => s === one(sp.scope)) ?? null,
     urgency: URGENCY_TIERS.find((t) => t === one(sp.urgency)) ?? null,
     layer: PRODUCT_LAYERS.find((l) => l === one(sp.layer)) ?? null,
+    pain: PAIN_TYPES.find((t) => t === one(sp.pain)) ?? null,
+    badge: BADGES.find((b) => b === one(sp.badge)) ?? null,
     id: one(sp.id),
   };
 }
@@ -47,6 +52,8 @@ export function viewHref(v: View, patch: Partial<View> = {}): string {
   if (x.scope) p.set("scope", x.scope);
   if (x.urgency) p.set("urgency", x.urgency);
   if (x.layer) p.set("layer", x.layer);
+  if (x.pain) p.set("pain", x.pain);
+  if (x.badge) p.set("badge", x.badge);
   if (x.id) p.set("id", x.id);
   return `/dashboard?${p}`;
 }
@@ -60,6 +67,15 @@ const URGENCY_SQL = `(select (array['high','medium','low'])[min(array_position(a
    from challenges ch where ch.company_id = c.id)`;
 const LAYER_SQL = `(select ch.structured_intelligence ->> 'product_layer' from challenges ch
    where ch.company_id = c.id and ch.structured_intelligence ->> 'product_layer' is not null order by ch.signal_score desc limit 1)`;
+
+// §10.1 badges, in the order a row shows them (the first is its top badge).
+const BADGES_SQL = `array_remove(array[
+     case when (c.score_breakdown ->> 'M')::numeric = 0 then 'single_signal' end,
+     case when exists (select 1 from challenges ch where ch.company_id = c.id and ch.author_relation = 'employee') then 'employee_post' end,
+     case when c.is_client_rendered then 'client_rendered' end,
+     case when c.resurfaced_at is not null and c.status = 'new' then 'new_evidence' end
+   ]::text[], null)`;
+const PAIN_SQL = "coalesce((select array_agg(distinct t) from challenges ch, unnest(ch.pain_types) t where ch.company_id = c.id), '{}')";
 
 // §10.1: Triage > 70, Nurture 50–70, hidden < 50 (never listed here).
 const QUEUE_SQL: Record<Queue, string> = {
@@ -85,6 +101,8 @@ export interface Row {
   automatable_pct: number | null; // largest automatable share across its signals
   urgency: UrgencyTier | null; // most urgent signal tier
   product_layer: (typeof PRODUCT_LAYERS)[number] | null; // what to pitch first
+  badges: Badge[]; // §10.1, the first is the row's top badge
+  pain_types: PainType[];
 }
 
 export interface Challenge {
@@ -103,6 +121,7 @@ export interface Challenge {
   llm_model: string | null;
   author_relation: string | null;
   urgency_tier: UrgencyTier | null;
+  pain_types: PainType[];
 }
 
 export interface Company extends Row {
@@ -163,6 +182,8 @@ export function loadInbox(view: View): Promise<Inbox> {
     if (view.scope) add(`${PCT_SQL} ${view.scope === "full" ? ">=" : "<"} ?`, FULL_AUTOMATION_PCT);
     if (view.urgency) add(`${URGENCY_SQL} = ?`, view.urgency);
     if (view.layer) add(`${LAYER_SQL} = ?`, view.layer);
+    if (view.pain) add("exists (select 1 from challenges ch where ch.company_id = c.id and ? = any(ch.pain_types))", view.pain);
+    if (view.badge) add(`? = any(${BADGES_SQL})`, view.badge);
     const where = filters.length ? ` and ${filters.join(" and ")}` : "";
 
     const counts = Object.fromEntries(QUEUES.map((q) => [q, 0])) as Record<Queue, number>;
@@ -185,7 +206,9 @@ export function loadInbox(view: View): Promise<Inbox> {
                 (best.si -> 'blast_radius' ->> 'estimated_hours_wasted_weekly')::int as hours,
                 ${PCT_SQL} as automatable_pct,
                 ${URGENCY_SQL} as urgency,
-                ${LAYER_SQL} as product_layer
+                ${LAYER_SQL} as product_layer,
+                ${BADGES_SQL} as badges,
+                ${PAIN_SQL} as pain_types
            from companies c
            left join lateral (
              select ch.structured_intelligence as si from challenges ch
@@ -214,7 +237,7 @@ export function loadInbox(view: View): Promise<Inbox> {
       const co = (
         await c.query(
           `select c.*, coalesce((select array_agg(distinct ch.source_family) from challenges ch where ch.company_id = c.id), '{}') as families,
-                  ${URGENCY_SQL} as urgency, ${LAYER_SQL} as product_layer
+                  ${URGENCY_SQL} as urgency, ${LAYER_SQL} as product_layer, ${BADGES_SQL} as badges, ${PAIN_SQL} as pain_types
              from companies c where c.id = $1`,
           [selectedId],
         )
@@ -223,7 +246,7 @@ export function loadInbox(view: View): Promise<Inbox> {
         const challenges = (
           await c.query<Challenge>(
             `select id, source_type, source_url, signal_score, evidence_confidence, buying_intent, blast_radius, department,
-                    posted_at, created_at, evidence_snippet, structured_intelligence, llm_model, author_relation, urgency_tier
+                    posted_at, created_at, evidence_snippet, structured_intelligence, llm_model, author_relation, urgency_tier, pain_types
                from challenges where company_id = $1 order by coalesce(posted_at, created_at) desc`,
             [selectedId],
           )

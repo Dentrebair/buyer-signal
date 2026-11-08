@@ -11,7 +11,8 @@
     "./liSearch": "./src/liSearch.ts",
     "./tier": "./src/tier.ts",
     "./bandit": "./src/bandit.ts",
-    "./drafts": "./src/drafts.ts"
+    "./drafts": "./src/drafts.ts",
+    "./painTypes": "./src/painTypes.ts"
   },
   "dependencies": {
     "cheerio": "1.2.0",

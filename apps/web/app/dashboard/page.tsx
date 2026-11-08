@@ -1,7 +1,7 @@
 // Triage inbox (PRD §10.1, Q67): queues + filters | ranked list | dossier.
 import Link from "next/link";
-import { ArrowLeft, ArrowSquareOut, ChartBar, EnvelopeSimple, Files, Fire, Flask, GlobeSimpleX, MagnifyingGlass, Robot, Warning, X } from "@phosphor-icons/react/ssr";
-import { type ScoreBreakdown, type SourceFamily, type StructuredIntelligence, boardColumn, sourceFamily } from "@bs/core";
+import { ArrowLeft, ArrowSquareOut, ChartBar, EnvelopeSimple, Files, Fire, Flask, GlobeSimpleX, MagnifyingGlass, Robot, Sparkle, Warning, X } from "@phosphor-icons/react/ssr";
+import { PAIN_TYPES, PAIN_TYPE_LABEL, type ScoreBreakdown, type SourceFamily, type StructuredIntelligence, type VerticalSlug, boardColumn, matchSpans, sourceFamily } from "@bs/core";
 import { ActionBar } from "@/components/ActionBar.tsx";
 import { Drafts } from "@/components/Drafts.tsx";
 import { FamilyIcon } from "@/components/FamilyIcon.tsx";
@@ -14,6 +14,9 @@ import { WebsiteAudit } from "@/components/WebsiteAudit.tsx";
 import { healthValue, inboxNotice } from "@/lib/health.ts";
 import { type Company, type CompanyCheckView, type Row, type View, QUEUES, loadInbox, parseView, viewHref } from "@/lib/inbox.ts";
 import {
+  BADGES,
+  BADGE_LABEL,
+  type Badge,
   FAMILY_LABEL,
   PRODUCT_LABEL,
   PRODUCT_LAYERS,
@@ -112,6 +115,8 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
           <FilterSelect name="urgency" label="Urgency" options={URGENCY_TIERS.map((t) => ({ value: t, label: URGENCY_LABEL[t] }))} />
           <FilterSelect name="layer" label="Pitch" options={PRODUCT_LAYERS.map((l) => ({ value: l, label: PRODUCT_LABEL[l] }))} />
           <FilterSelect name="scope" label="Automation" options={SCOPES.map((s) => ({ value: s, label: SCOPE_LABEL[s] }))} />
+          <FilterSelect name="pain" label="Pain type" options={PAIN_TYPES.map((t) => ({ value: t, label: PAIN_TYPE_LABEL[t] }))} />
+          <FilterSelect name="badge" label="Badge" options={BADGES.map((b) => ({ value: b, label: BADGE_LABEL[b] }))} />
           {filtered && (
             <Link href={viewHref(view, { vertical: null, country: null, size: null, scope: null, urgency: null, layer: null, id: null })} className="clear-filters">
               Clear filters
@@ -200,6 +205,7 @@ function ListRow({ row, href, current }: { row: Row; href: string; current: bool
       </span>
       {row.symptom && <span className="row-pain">{row.symptom}</span>}
       <span className="row-tags">
+        {row.badges[0] && <BadgeTag badge={row.badges[0]} />}
         <UrgencyTag tier={row.urgency} />
         {row.product_layer && <span className={`layer-tag layer-${row.product_layer}`}>{PRODUCT_LABEL[row.product_layer]}</span>}
         <ScopeTag pct={row.automatable_pct} />
@@ -222,6 +228,54 @@ function ListRow({ row, href, current }: { row: Row; href: string; current: bool
         </span>
       </span>
     </RowLink>
+  );
+}
+
+// A badge (§10.1): icon + words; amber when it asks for care, green for new evidence.
+function BadgeTag({ badge }: { badge: Badge }) {
+  const good = badge === "new_evidence";
+  return (
+    <span className={`badge-tag${good ? " badge-good" : ""}`}>
+      {good ? <Sparkle size={12} aria-hidden /> : <Warning size={12} aria-hidden />} {BADGE_LABEL[badge]}
+    </span>
+  );
+}
+
+// Proof Viewer (§10.2): the phrases the keyword filter matched, marked in the post's own text.
+const CATEGORY_LABEL: Record<string, string> = {
+  AUTOMATABLE_TASK: "A task software could do",
+  MANUAL_ROLE: "A title for manual work",
+  INTEGRATION_DEBT: "Copying between systems",
+  DOCUMENT_FRICTION: "Paper and documents",
+  INFORMATION_SILO: "Scattered knowledge",
+  OWNER_DEPENDENCY: "Depends on the owner",
+  PHYSICAL_ROLE: "Physical work",
+  RECRUITER: "Recruiter wording",
+};
+function Proof({ text, vertical }: { text: string; vertical: string | null }) {
+  const spans = matchSpans(text, vertical as VerticalSlug | null);
+  const parts: React.ReactNode[] = [];
+  let at = 0;
+  for (const m of spans) {
+    if (m.start < at) continue;
+    parts.push(text.slice(at, m.start));
+    parts.push(
+      <mark key={m.start} className="ev-mark" title={CATEGORY_LABEL[m.category] ?? m.category}>
+        {text.slice(m.start, m.end)}
+      </mark>,
+    );
+    at = m.end;
+  }
+  parts.push(text.slice(at));
+  return (
+    <>
+      {spans.length > 0 && (
+        <p className="ev-proof-note">
+          <span className="num">{spans.length}</span> matched {spans.length === 1 ? "phrase" : "phrases"} marked: hover one for what it shows.
+        </p>
+      )}
+      <div className="ev-text">{parts}</div>
+    </>
   );
 }
 
@@ -386,6 +440,11 @@ function Dossier({ company: c, view, nextHref, selfHref }: { company: Company; v
                         ),
                         ch.structured_intelligence?.stance === "solved" &&
                           { by_hand: "Solved by labor", partly: "Partly solved", with_software: "Already automating" }[ch.structured_intelligence.solved_how ?? "by_hand"],
+                        ch.author_relation === "employee" && (
+                          <span className="badge-tag">
+                            <Warning size={12} aria-hidden /> Employee post: don&apos;t quote
+                          </span>
+                        ),
                         ageLabel(ch.posted_at),
                         <>
                           Signal <span className="num">{ch.signal_score}</span>
@@ -398,10 +457,19 @@ function Dossier({ company: c, view, nextHref, selfHref }: { company: Company; v
                         ),
                       ]}
                     />
+                    {ch.pain_types.length > 0 && (
+                      <span className="ev-pains">
+                        {ch.pain_types.map((t) => (
+                          <span key={t} className="fact">
+                            {PAIN_TYPE_LABEL[t]}
+                          </span>
+                        ))}
+                      </span>
+                    )}
                     {ch.author_relation !== "employee" && rest.length > 0 && (
                       <details>
                         <summary>Read the post</summary>
-                        <div className="ev-text">{rest.join("\n\n")}</div>
+                        <Proof text={rest.join("\n\n")} vertical={c.vertical} />
                       </details>
                     )}
                   </li>
@@ -507,6 +575,25 @@ function Notices({ company: c }: { company: Company }) {
         </>
       ),
       warn: true,
+    });
+  if (c.badges.includes("employee_post"))
+    items.push({
+      icon: <Warning size={14} aria-hidden />,
+      text: (
+        <>
+          <strong>Employee post: don&apos;t quote.</strong> Evidence from someone who works there. Use it as a pattern; never mention the post or the person.
+        </>
+      ),
+      warn: true,
+    });
+  if (c.badges.includes("new_evidence"))
+    items.push({
+      icon: <Sparkle size={14} aria-hidden />,
+      text: (
+        <>
+          <strong>New evidence.</strong> Rejected before; it came back with a new kind of signal and a higher score.
+        </>
+      ),
     });
   if (c.is_sample) items.push({ icon: <Flask size={14} aria-hidden />, text: "Sample data, not a live lead." });
   if (!items.length) return null;

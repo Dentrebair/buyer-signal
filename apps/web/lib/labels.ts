@@ -56,6 +56,17 @@ export { PRODUCT_LABEL, PRODUCT_LAYERS, URGENCY_LABEL, URGENCY_TIERS, type Urgen
 export const verticalLabel = (slug: string | null) =>
   slug && slug in VERTICALS ? VERTICALS[slug as keyof typeof VERTICALS] : "Vertical unknown";
 
+// Badges (§10.1): what needs care before reaching out, always icon + words. new_evidence is good
+// news (a rejected company resurfaced), not a warning.
+export const BADGES = ["single_signal", "employee_post", "client_rendered", "new_evidence"] as const;
+export type Badge = (typeof BADGES)[number];
+export const BADGE_LABEL: Record<Badge, string> = {
+  single_signal: "Single signal",
+  employee_post: "Employee post: don't quote",
+  client_rendered: "Client-rendered site",
+  new_evidence: "New evidence",
+};
+
 // "all": a LinkedIn topic search, which has no market filter (§4.1d).
 export const countryLabel = (c: string | null) => (c === "all" ? "Any market" : c && c in COUNTRIES ? COUNTRIES[c as keyof typeof COUNTRIES] : "—");
 
