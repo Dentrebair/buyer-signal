@@ -301,6 +301,13 @@ headline. Kept **60 days**, then purged (poll-runs).
   (the worker re-checks 21 days), `maxPosts`, `scrapeComments`, `maxComments`. Comments arrive as
   their own items with `postId`; each carries the commenter's name, headline (`position`), profile
   link, person or company, and whether it is the post's author.
+- **Vendor words left out (2026-11-08):** each topic is searched as `"topic" NOT AI NOT software NOT
+  automation NOT platform NOT demo` (LinkedIn's limit is 5 operators). The second run ("customs
+  paperwork", "proof of delivery": 10 posts, 5 with pain) had all 5 pain posts from vendors or
+  commentators. Probes the same day: without the exclusion, 4 of 10 results were AI or software
+  pitches; with it, 0 (2 service sellers remained). The actor's `authorKeywords` headline filter
+  ("founder OR owner OR operations OR accounts") matched 8 of 10 but 7 of those were vendor
+  founders, so it is not used.
 - **Test run** (1 topic "freight invoices", 5 posts, up to 5 comments each): 5 posts and 12
   comments, ≈ $0.034. Full text and headlines arrived; no emails; many authors and commenters were
   vendors, so the AI filter matters.

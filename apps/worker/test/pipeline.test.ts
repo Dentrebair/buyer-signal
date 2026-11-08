@@ -278,7 +278,7 @@ describe.skipIf(!process.env.DATABASE_URL)("worker pipeline (database)", { timeo
     const job = { vertical: "logistics" as const, topics: ["freight invoices"], posts: 5, comments: 10 };
     expect(await startLiRun(deps, job, "test-li-key")).toEqual({ started: RUN_ID });
     expect(await startLiRun(deps, job, "test-li-key")).toEqual({ started: RUN_ID }); // retry: no second run
-    expect(started).toEqual([expect.objectContaining({ searchQueries: ['"freight invoices"'], maxPosts: 5, maxComments: 10, scrapeComments: true })]);
+    expect(started).toEqual([expect.objectContaining({ searchQueries: ['"freight invoices" NOT AI NOT software NOT automation NOT platform NOT demo'], maxPosts: 5, maxComments: 10, scrapeComments: true })]);
     // Completion is checked 20 s after the start, not at the next 5-minute poll.
     expect(sent.find((s) => s.queue === Q.apifyRunEvent)).toMatchObject({ data: { apifyRunId: RUN_ID, recheck: 30 }, opts: { startAfter: 20 } });
 

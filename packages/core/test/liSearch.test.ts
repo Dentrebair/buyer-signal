@@ -63,7 +63,8 @@ describe("LinkedIn post search (§4.1d)", () => {
   });
 
   it("searches each topic as its own phrase, with no way to add search operators", () => {
-    expect(liSearchInput({ topics: ["freight invoices", 'bills "of" lading'], posts: 5, comments: 5 }).searchQueries).toEqual(['"freight invoices"', '"bills of lading"']);
+    const not = "NOT AI NOT software NOT automation NOT platform NOT demo"; // vendor words, at LinkedIn's limit of 5 operators
+    expect(liSearchInput({ topics: ["freight invoices", 'bills "of" lading'], posts: 5, comments: 5 }).searchQueries).toEqual([`"freight invoices" ${not}`, `"bills of lading" ${not}`]);
     expect(StartLiRun.safeParse({ vertical: "logistics", topics: ['x" OR site:evil.com'], posts: 5, comments: 5 }).success).toBe(false);
     expect(StartLiRun.safeParse({ vertical: "logistics", topics: [], posts: 5, comments: 5 }).success).toBe(false);
     // A job queued before topics existed still parses.

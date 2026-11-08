@@ -22,10 +22,21 @@ export const LI_TOPICS_PER_RUN = 2;
 export const LI_ARM_COUNTRY = "all";
 const AI_PER_POST_USD = 0.001; // one Haiku read of a post and its comments (measured ~$0.0004, 2026-11-08)
 
-// Each topic is searched as a phrase: LinkedIn matches it, not each word anywhere in the post.
+// Vendors write about pain the most: in the first two runs (2026-11-08) every pain post was
+// someone selling a fix. Their posts name the product, so the search leaves out these words.
+// Probed 2026-11-08 on "customs paperwork" and "proof of delivery": 0 of 10 results used them,
+// against 4 AI or software pitches of 10 without. LinkedIn allows 5 operators per query, so 5.
+// (The actor's authorKeywords headline filter was probed too: vendors are founders, so 7 of 8
+// "founder OR owner OR operations OR accounts" matches were still vendors. Not used.)
+export const LI_EXCLUDE = ["AI", "software", "automation", "platform", "demo"] as const;
+
+// Each topic is searched as a phrase (LinkedIn matches it, not each word anywhere in the post),
+// without the vendor words.
+export const liQuery = (topic: string) => `"${topic.replace(/"/g, "")}" ${LI_EXCLUDE.map((w) => `NOT ${w}`).join(" ")}`;
+
 export function liSearchInput(x: { topics: readonly string[]; posts: number; comments: number }) {
   return {
-    searchQueries: x.topics.map((t) => `"${t.replace(/"/g, "")}"`),
+    searchQueries: x.topics.map(liQuery),
     maxPosts: x.posts, // per query
     postedLimit: "month", // the actor's nearest window to the 21-day rule (§4.3); the worker re-checks
     sortBy: "relevance",
