@@ -67,7 +67,16 @@ describe("OpenRouterClient", () => {
     expect(JSON.parse(thinking.calls[0]!.body as string)).toMatchObject({ reasoning: { max_tokens: 1024 }, max_tokens: 2624 });
   });
 
-  it("web search: sends the web plugin and returns the cited URLs", async () => {
+  it("a router's price (-1, it depends on the model picked) is budgeted at the dearest model's", async () => {
+    const models = new Response(JSON.stringify({ data: [{ id: "openrouter/auto", pricing: { prompt: "-1", completion: "-1" } }] }));
+    const { f } = fakeFetch([models]);
+    const worst = await new OpenRouterClient({ env: { OPENROUTER_API_KEY: "k" }, fetch: f }).worstCaseUsd("drafts", { ...req, maxTokens: 1600, reasoningTokens: 1024 });
+    // (1,600 + 1,024) output tokens at $25 per million, plus the prompt at $5 per million.
+    expect(worst).toBeGreaterThan(2624 * 25e-6);
+    expect(worst).toBeLessThan(0.2);
+  });
+
+    it("web search: sends the web plugin and returns the cited URLs", async () => {
     const res = new Response(
       JSON.stringify({
         model: env.MODEL_EXTRACTION,
@@ -87,8 +96,8 @@ describe("OpenRouterClient", () => {
 
   it("refuses to start without the task's model setting, unless the task has a default", () => {
     expect(() => new OpenRouterClient({ env: { OPENROUTER_API_KEY: "k" } }).model("roast")).toThrow(/MODEL_ROAST/);
-    // Drafts (§9) default to a strong writer; MODEL_DRAFTS overrides it.
-    expect(new OpenRouterClient({ env: { OPENROUTER_API_KEY: "k" } }).model("drafts")).toBe("anthropic/claude-sonnet-5.5");
+    // Drafts (§9) default to OpenRouter's Auto Router; MODEL_DRAFTS overrides it.
+    expect(new OpenRouterClient({ env: { OPENROUTER_API_KEY: "k" } }).model("drafts")).toBe("openrouter/auto");
     expect(new OpenRouterClient({ env: { OPENROUTER_API_KEY: "k", MODEL_DRAFTS: "google/gemini-3.1-pro-preview" } }).model("drafts")).toBe("google/gemini-3.1-pro-preview");
   });
 });

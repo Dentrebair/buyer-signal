@@ -10,9 +10,13 @@ const MODEL_ENV: Record<LlmTask, string> = {
   roast: "MODEL_ROAST",
 };
 
-// A task with no model set falls back here. Drafts (§9) want a strong writer; on demand only, so
-// ≈ $0.016 a draft at OpenRouter's price (2026-11-08: $2 / $10 per million tokens in / out).
-const DEFAULT_MODEL: Partial<Record<LlmTask, string>> = { drafts: "anthropic/claude-sonnet-5.5" };
+// A task with no model set falls back here. Drafts (§9, operator's choice 2026-11-08): OpenRouter's
+// Auto Router picks the model for each request; the model it chose is recorded with the draft.
+const DEFAULT_MODEL: Partial<Record<LlmTask, string>> = { drafts: "openrouter/auto" };
+// A router's price is listed as -1 (it depends on the model it picks). The budget gate's worst
+// case then assumes the dearest model it could pick: Claude Opus 5, $5 / $25 per million tokens
+// (2026-11-08). What is spent is the cost OpenRouter reports for the call.
+const ROUTER_CEILING: Pricing = { prompt: 5e-6, completion: 25e-6 };
 
 export class ProviderError extends Error {
   constructor(
@@ -155,7 +159,7 @@ export class OpenRouterClient implements LlmClient {
     return this.pricing.then((m) => {
       const p = m.get(model);
       if (!p) throw new Error(`no OpenRouter price for ${model}`);
-      return p;
+      return p.prompt < 0 || p.completion < 0 ? ROUTER_CEILING : p;
     });
   }
 }
