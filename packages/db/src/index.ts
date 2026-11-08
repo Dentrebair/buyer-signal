@@ -11,3 +11,4 @@ export * from "./health.ts";
 export * from "./leakCheck.ts";
 export * from "./alerts.ts";
 export * from "./drafts.ts";
+export * from "./trends.ts";

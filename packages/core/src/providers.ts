@@ -50,3 +50,10 @@ export interface LlmClient {
 export interface DomainAge {
   registeredAt(domain: string): Promise<Date | null>;
 }
+
+// Text embeddings (trends, §5.6): one vector per text, all the same length (EMBED_DIMS).
+export const EMBED_DIMS = 768;
+export interface Embedder {
+  embed(texts: string[]): Promise<{ vectors: number[][]; model: string; costUsd: number }>;
+}
+

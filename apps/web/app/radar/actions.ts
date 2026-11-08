@@ -23,9 +23,10 @@ const SOURCE = {
   sniff: { queue: Q.sniffSeeds, message: "Website check started for waiting sites." },
   search: { queue: Q.resolveBatch, message: "Website search started, within today's search quota." },
   drift: { queue: Q.driftCheck, message: "Health check started: free, results in a few seconds." },
+  trends: { queue: Q.trends, message: "Rebuilding trends: under a minute, a cent or less." },
 } as const;
 
-export async function runSource(source: "sniff" | "search" | "drift"): Promise<RunResult> {
+export async function runSource(source: "sniff" | "search" | "drift" | "trends"): Promise<RunResult> {
   if (!Object.hasOwn(SOURCE, source)) return { ok: false, message: "Unknown source." };
   await asOperator(async () => {});
   await (await queue()).send(SOURCE[source].queue, {});

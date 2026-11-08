@@ -26,6 +26,7 @@ export const Q = {
   auditDropped: "audit-dropped",
   dailyAlerts: "daily-alerts",
   draftLlm: "draft-llm",
+  trends: "trends",
   deadLetter: "dead-letter",
 } as const;
 export type QueueName = (typeof Q)[keyof typeof Q];

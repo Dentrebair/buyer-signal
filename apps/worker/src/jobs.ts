@@ -60,6 +60,15 @@ import {
   type RawArchive,
   type ApprovedAtoms,
   type Mailer,
+  type Embedder,
+  type TrendSource,
+  TREND_MAX_PER_VERTICAL,
+  TREND_MIN_SIZE,
+  TREND_RECENT_DAYS,
+  TREND_WINDOW_DAYS,
+  buildTrendLabel,
+  centralMembers,
+  clusterVectors,
   type DraftLlm,
   buildDraft,
   mergeDraft,
@@ -133,6 +142,13 @@ import {
   approvedAtoms,
   draftInput,
   draftRequest,
+  collectPainStatements,
+  previousTrendLabels,
+  replaceTrends,
+  saveEmbeddings,
+  statementsToEmbed,
+  trendStatements,
+  type TrendClusterRow,
   expireDraftRequests,
   failDraft,
   saveDrafts,
@@ -187,6 +203,7 @@ export interface Deps {
   sniff: (x: SniffInput) => Promise<SniffResult>;
   archive: RawArchive;
   mailer: Mailer | null; // null until RESEND_API_KEY and ALERT_EMAIL_TO are set: alerts stay on /health
+  embedder: Embedder; // trends (§5.6), inside the monthly AI cap
   send: Send;
   settings: Settings;
   now: () => Date;
@@ -920,6 +937,73 @@ export async function draftLlm(d: Pick<Deps, "pool" | "llm" | "log">, job: Draft
   const fresh = drafts.emails.length === 1;
   await withTransaction(d.pool, (c) => saveDrafts(c, { requestId: req.id, companyId: req.companyId, drafts, fresh, model: out.model, costUsd: out.costUsd }));
   return `${strategy} email for ${company.name} ($${out.costUsd.toFixed(4)})`;
+}
+
+// ── trends (§5.6): weekly, and Run now on /trends ────────────────────────────
+// New pain statements are embedded (≈ $0.00001 each), then each vertical's last 180 days are
+// grouped by meaning; a group of 3 or more is named by the AI (≈ $0.0003), unless it kept most of
+// last run's members, when it keeps last run's name.
+export async function trendsJob(d: Pick<Deps, "pool" | "llm" | "embedder" | "now" | "log">): Promise<{ added: number; embedded: number; groups: number; named: number; reused: number }> {
+  const added = await collectPainStatements(d.pool);
+  let embedded = 0;
+  for (let batch = await statementsToEmbed(d.pool, 100); batch.length; batch = await statementsToEmbed(d.pool, 100)) {
+    const { vectors } = await d.embedder.embed(batch.map((b) => b.text));
+    await saveEmbeddings(d.pool, batch.map((b, i) => ({ id: b.id, vec: vectors[i]! })));
+    embedded += batch.length;
+  }
+  const now = d.now().getTime();
+  const DAY = 86_400_000;
+  const all = await trendStatements(d.pool, TREND_WINDOW_DAYS);
+  const byVertical = new Map<string | null, typeof all>();
+  for (const s of all) byVertical.set(s.vertical, [...(byVertical.get(s.vertical) ?? []), s]);
+  const before = await previousTrendLabels(d.pool);
+  const reuse = (ids: string[]) => {
+    const mine = new Set(ids);
+    for (const p of before) {
+      const shared = p.member_ids.filter((x) => mine.has(x)).length;
+      if (shared / (mine.size + p.member_ids.length - shared) >= 0.6) return p; // most members the same
+    }
+    return null;
+  };
+  const rows: TrendClusterRow[] = [];
+  let named = 0;
+  let reused = 0;
+  for (const [vertical, items] of byVertical)
+    for (const members of clusterVectors(items.slice(-TREND_MAX_PER_VERTICAL))) { // statements come oldest first
+      const age = (m: (typeof members)[number]) => (now - new Date(m.seen_at).getTime()) / DAY;
+      const sources: Partial<Record<TrendSource, number>> = {};
+      for (const m of members) sources[m.source] = (sources[m.source] ?? 0) + 1;
+      const ids = members.map((m) => m.id);
+      const examples = centralMembers(members, 5).map((m) => m.text);
+      let label: string | null = null;
+      let summary: string | null = null;
+      if (members.length >= TREND_MIN_SIZE) {
+        const had = reuse(ids);
+        if (had) {
+          ({ label, summary } = had);
+          reused++;
+        } else {
+          const out = await d.llm.json("extraction", buildTrendLabel({ vertical, statements: centralMembers(members, 12).map((m) => m.text) }));
+          ({ label, summary } = out.data);
+          named++;
+        }
+      }
+      rows.push({
+        vertical,
+        label,
+        summary,
+        size: members.length,
+        recent: members.filter((m) => age(m) <= TREND_RECENT_DAYS).length,
+        previous: members.filter((m) => age(m) > TREND_RECENT_DAYS && age(m) <= 2 * TREND_RECENT_DAYS).length,
+        sources,
+        examples,
+        member_ids: ids,
+      });
+    }
+  await withTransaction(d.pool, (c) => replaceTrends(c, rows));
+  const out = { added, embedded, groups: rows.length, named, reused };
+  d.log("trends built", out);
+  return out;
 }
 
 // ── daily-alerts (Q65) ──────────────────────────────────────────────────────

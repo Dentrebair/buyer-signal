@@ -203,7 +203,7 @@ export function RunLinkedin() {
   );
 }
 
-export function RunSource({ source, label }: { source: "sniff" | "search" | "drift"; label: string }) {
+export function RunSource({ source, label }: { source: "sniff" | "search" | "drift" | "trends"; label: string }) {
   const [result, setResult] = useState<RunResult | null>(null);
   const [pending, start] = useTransition();
   return (

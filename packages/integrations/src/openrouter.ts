@@ -1,6 +1,6 @@
 // OpenRouter implementation of LlmClient (PRD §5.3: one wrapper — task → model setting,
 // structured JSON output, Zod validation, provider-reported cost).
-import type { LlmCallResult, LlmClient, LlmRequest, LlmTask } from "@bs/core";
+import { EMBED_DIMS, type Embedder, type LlmCallResult, type LlmClient, type LlmRequest, type LlmTask } from "@bs/core";
 
 const BASE = "https://openrouter.ai/api/v1";
 const MODEL_ENV: Record<LlmTask, string> = {
@@ -57,7 +57,12 @@ interface Pricing {
   completion: number;
 }
 
-export class OpenRouterClient implements LlmClient {
+// Embeddings for trends (§5.6): verified 2026-11-08 (POST /embeddings, `dimensions` honoured,
+// usage.cost reported); $0.02 per million tokens. MODEL_EMBEDDINGS overrides it.
+const DEFAULT_EMBEDDINGS = "openai/text-embedding-3-small";
+const EMBED_BATCH = 100;
+
+export class OpenRouterClient implements LlmClient, Embedder {
   private readonly apiKey: string;
   private readonly env: Record<string, string | undefined>;
   private readonly maxTokens: number;
@@ -135,6 +140,22 @@ export class OpenRouterClient implements LlmClient {
       .map((a: { url_citation?: { url?: unknown } }) => a?.url_citation?.url)
       .filter((u: unknown): u is string => typeof u === "string");
     return { content, citations, model: String(json.model ?? model), cost: Number.isFinite(cost) ? cost : 0 };
+  }
+
+  async embed(texts: string[]): Promise<{ vectors: number[][]; model: string; costUsd: number }> {
+    const model = this.env.MODEL_EMBEDDINGS || DEFAULT_EMBEDDINGS;
+    const vectors: number[][] = [];
+    let costUsd = 0;
+    for (let i = 0; i < texts.length; i += EMBED_BATCH) {
+      const batch = texts.slice(i, i + EMBED_BATCH);
+      const json = await this.request("/embeddings", { method: "POST", body: JSON.stringify({ model, input: batch, dimensions: EMBED_DIMS }) });
+      const data = (json?.data ?? []) as { index?: number; embedding: number[] }[];
+      if (data.length !== batch.length || data.some((d) => d.embedding?.length !== EMBED_DIMS))
+        throw new ProviderError(`embeddings: expected ${batch.length} vectors of ${EMBED_DIMS}`, false);
+      for (const d of [...data].sort((a, b) => (a.index ?? 0) - (b.index ?? 0))) vectors.push(d.embedding);
+      costUsd += Number(json?.usage?.cost ?? 0) || 0;
+    }
+    return { vectors, model, costUsd };
   }
 
   private async request(path: string, init: { method: string; body?: string }): Promise<any> {

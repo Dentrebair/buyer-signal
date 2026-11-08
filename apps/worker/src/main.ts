@@ -4,9 +4,9 @@ import * as Sentry from "@sentry/node";
 import { PgBoss } from "pg-boss";
 import { z } from "zod";
 import { type QueueName, ApifyRunEvent, CardLiComment, CardLiPost, DraftLlm, ExtractLlm, FetchDataset, FetchLiRun, Q, ReadLiPost, SniffDomain, StartBoardRun, StartLiRun } from "@bs/core";
-import { BudgetExceededError, createPool, gatedLlm } from "@bs/db";
+import { BudgetExceededError, createPool, gatedEmbedder, gatedLlm } from "@bs/db";
 import { ApifyClient, OpenRouterClient, ProviderError, RdapClient, ResendMailer, SupabaseRawArchive, fetchPage, loadFingerprints, sniffWebsite } from "@bs/integrations";
-import { type Deps, auditDropped, dailyAlertsJob, draftLlm, cardLiComment, cardLiPost, driftCheck, purgeRaw, extractLlm, fetchDataset, fetchLiRun, ingestRotation, readLiPost, startLiRun, onApifyRunEvent, syncSearchArms, pollRuns, reconcileApify, resolveBatch, sniffDomain, sniffSeeds, startBoardRun } from "./jobs.ts";
+import { type Deps, auditDropped, dailyAlertsJob, draftLlm, trendsJob, cardLiComment, cardLiPost, driftCheck, purgeRaw, extractLlm, fetchDataset, fetchLiRun, ingestRotation, readLiPost, startLiRun, onApifyRunEvent, syncSearchArms, pollRuns, reconcileApify, resolveBatch, sniffDomain, sniffSeeds, startBoardRun } from "./jobs.ts";
 
 const env = z
   .object({
@@ -47,10 +47,12 @@ const describe = (e: unknown) =>
 const boss = new PgBoss({ connectionString: env.DATABASE_URL, max: 3, application_name: "bs-worker-boss" });
 const pool = createPool(2);
 
+const openrouter = new OpenRouterClient();
 const deps: Deps = {
   pool,
   apify: new ApifyClient(),
-  llm: gatedLlm(pool, new OpenRouterClient(), { monthlyCapUsd: env.MONTHLY_CAP_USD }),
+  llm: gatedLlm(pool, openrouter, { monthlyCapUsd: env.MONTHLY_CAP_USD }),
+  embedder: gatedEmbedder(pool, openrouter, { monthlyCapUsd: env.MONTHLY_CAP_USD }),
   fetchPage: (url) => fetchPage(url),
   rdap: new RdapClient(),
   sniff: (x) => sniffWebsite(x),
@@ -91,6 +93,8 @@ const queues: QueueDef<any>[] = [
   { name: Q.extractLlm, concurrency: 2, expireInSeconds: 180, schema: ExtractLlm, run: extractLlm },
   // Email drafts (§9): only enqueued by the Create drafts button.
   { name: Q.draftLlm, concurrency: 1, expireInSeconds: 180, schema: DraftLlm, run: draftLlm },
+  // Trends (§5.6): weekly, and Run now on /trends; cents at most.
+  { name: Q.trends, concurrency: 1, expireInSeconds: 900, schema: z.unknown(), run: (d) => trendsJob(d) },
   // LinkedIn post search (§4.1d): Run now and the rotation's social slot; completion through poll-runs.
   { name: Q.startLiRun, concurrency: 1, expireInSeconds: 120, schema: StartLiRun, run: startLiRun },
   { name: Q.fetchLiRun, concurrency: 1, expireInSeconds: 300, schema: FetchLiRun, run: fetchLiRun },
@@ -161,6 +165,7 @@ async function main() {
   await boss.schedule(Q.purgeRaw, "45 3 * * *");
   await boss.schedule(Q.auditDropped, "0 5 * * *");
   await boss.schedule(Q.dailyAlerts, "0 6 * * *"); // after the drift check (05:30)
+  await boss.schedule(Q.trends, "30 6 * * 1"); // Mondays
   await boss.schedule(Q.sniffSeeds, "*/10 * * * *");
   // Daily rotation: off for now; runs are started by hand (Run now). To enable, uncomment and
   // set ROTATION_ENABLED=true. 02:00 is before the 04:00 resolve batch, so the day's new posts

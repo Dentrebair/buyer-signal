@@ -123,6 +123,7 @@ function fakes(
     sniff: async (x) => over.sniffs?.[x.domain] ?? { reachable: false, reason: "no fake" },
     archive: { put: async (x) => void archived.push(x), purge: async () => 0 },
     mailer: null,
+    embedder: { embed: async (texts) => ({ vectors: texts.map(() => Array.from({ length: 768 }, (_, i) => (i === 0 ? 1 : 0))), model: "fake/embed", costUsd: 0 }) },
     send,
     settings: {
       apifyCycleCapUsd: over.capUsd ?? 4.5,

@@ -1,6 +1,6 @@
 // Budget gate (PRD §5.3). `spend_counters` is the gate; `spend_events` is the audit record.
 import type pg from "pg";
-import type { LlmCallResult, LlmClient, LlmRequest, LlmTask } from "@bs/core";
+import type { Embedder, LlmCallResult, LlmClient, LlmRequest, LlmTask } from "@bs/core";
 import { monthKey } from "@bs/core";
 import { type Db, withTransaction } from "./pool.ts";
 
@@ -72,3 +72,26 @@ export function gatedLlm(pool: pg.Pool, inner: LlmClient, opts: { monthlyCapUsd:
     },
   };
 }
+
+// Embeddings under the same monthly cap: a batch reserves a generous worst case (≈ 3 characters a
+// token at $0.20 per million, the dearest embedding model listed 2026-11-08) and settles the cost
+// OpenRouter reports.
+export function gatedEmbedder(pool: pg.Pool, inner: Embedder, opts: { monthlyCapUsd: number; now?: () => Date }): Embedder {
+  const now = opts.now ?? (() => new Date());
+  return {
+    async embed(texts) {
+      const key = monthKey(now());
+      const reserved = (texts.reduce((n, t) => n + t.length, 0) / 3) * 0.2e-6 + 0.0001;
+      if (!(await reserveSpend(pool, key, reserved, opts.monthlyCapUsd))) throw new BudgetExceededError(key);
+      try {
+        const out = await inner.embed(texts);
+        await settleSpend(pool, key, reserved, { provider: "openrouter", model: out.model, units: texts.length, costUsd: out.costUsd, ref: "embeddings" });
+        return out;
+      } catch (e) {
+        await settleSpend(pool, key, reserved, null);
+        throw e;
+      }
+    },
+  };
+}
+

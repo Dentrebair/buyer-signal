@@ -648,6 +648,22 @@ Reddit/community posts → trie → `AnonymousTrendExtraction` → `gemini-embed
 (768 dims) → `macro_trends` → weekly `match_macro_trends` RPC (cosine ≥ 0.82) →
 `trend_clusters`. Read-only "Macro Trends" view. No reverse stack-sniff in v1.
 
+**Built 2026-11-08, on the pain the pipeline already reads** (Reddit stays deferred): job posts'
+manual work (`verified_symptom`, sample cards included: real posts, not live leads), LinkedIn
+posts' pains and the critical points of commenters who share the pain or add a perspective
+become `pain_statements` (migration 0027): AI-written text only, no names or quotes. Embeddings
+through OpenRouter (`openai/text-embedding-3-small`, 768 dims, $0.02 per million tokens;
+`MODEL_EMBEDDINGS` overrides; the Gemini key was empty), inside the monthly AI cap
+(`gatedEmbedder`). The weekly `trends` job (Mondays 06:30 UTC, and Run now on `/trends`) groups
+each vertical's last 180 days by **average linkage at 0.5**, tuned on the first 107 statements:
+centroid grouping drifted (one logistics group took in both freight-invoice audits and customs
+paperwork) and 0.82 grouped nothing with this model. A group of 3 or more is named by the AI
+(`buildTrendLabel`, ≈ $0.0001 each) unless it kept most of last run's members, when it keeps its
+name. `/trends`: per vertical, each pain with its name, summary, how often it was seen, the last 30
+days against the 30 before (new / rising / falling / steady), sources and examples. First build:
+17 trends, $0.0009 (freight-invoice audits 11, customs paperwork 6, proof of delivery not reaching
+billing 5, …). Facebook public groups and pages would feed the same pipe (§4.1e, to decide).
+
 ## 6. The Bouncer (deterministic, $0)
 
 ### 6.1 HTML minification

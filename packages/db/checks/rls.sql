@@ -74,6 +74,12 @@ select pg_temp.try('anon', 'anon read draft requests', 'blocked', 'select count(
 select pg_temp.try('authenticated', 'operator mark a request done', 'blocked', 'update draft_requests set status = ''done''');
 select pg_temp.try('authenticated', 'operator write drafts on a company', 'blocked', 'update companies set outreach_drafts = ''{}'' where domain = ''rls-test.example''');
 delete from draft_requests where company_id in (select id from companies where domain = 'rls-test.example');
+-- Trends (0027): read only for the operator, nothing for anon.
+select pg_temp.try('authenticated', 'operator read pain statements', 'allowed', 'select count(*) from pain_statements');
+select pg_temp.try('anon', 'anon read pain statements', 'blocked', 'select count(*) from pain_statements');
+select pg_temp.try('authenticated', 'operator write pain statements', 'blocked', 'insert into pain_statements (source, source_id, text, seen_at) values (''job_post'', ''x'', ''y'', now())');
+select pg_temp.try('authenticated', 'operator read trends', 'allowed', 'select count(*) from trend_clusters');
+select pg_temp.try('authenticated', 'operator write trends', 'blocked', 'delete from trend_clusters');
 -- Alerts (0023): read only.
 select pg_temp.try('authenticated', 'operator read alerts', 'allowed', 'select count(*) from alerts');
 select pg_temp.try('anon', 'anon read alerts', 'blocked', 'select count(*) from alerts');
