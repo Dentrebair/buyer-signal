@@ -359,6 +359,39 @@ headline. Kept **60 days**, then purged (poll-runs).
   as implied (lower buying intent). Natural id `comment:linkedin:<id>`; the Contacts tab shows
   "In the inbox" or why not on each comment.
 
+### 4.1e Facebook group post search (agreed 2026-11-08; building)
+
+**Why:** owners and staff vent about their own manual work in public Facebook groups ("I spend
+every Sunday doing invoices"), and Facebook's keyword search can be **filtered by location**, which
+solves LinkedIn search's missing market filter (§4.1d). Researched 2026-11-08 on Apify's store:
+
+| Option | Actor | Price | Use |
+|---|---|---|---|
+| **Keyword search, groups only, by location** (chosen) | `topapi/facebook-search-posts-scraper` | ≈ $0.0024 a post (+ $0.001 with top comments) | Posts by keyword, `locationUid` (a Facebook place id), date range, `postSource: groups` (≈ 25 % of search results come from public groups), `mustContainQuery` |
+| Posts from a public group | `apify/facebook-groups-scraper` (47k users, 4.9★) | $0.005 a post | Later: follow groups that prove useful |
+| Finding groups | groups-search scrapers | ≈ $0.003 a group | Later |
+| Business page posts | `apify/facebook-posts-scraper` | $0.005 a post | Not now: pages post marketing |
+| Comments | `apify/facebook-comments-scraper` | $0.0025 a comment | Later, as on LinkedIn |
+| Reviews of a business | `apify/facebook-reviews-scraper` | $0.0025 a review | Later (customers' complaints show a business's operational pain) |
+
+**Decisions:**
+- **Scope now:** keyword search on the vertical's topics (§4.1a `SOCIAL_TOPICS`), `postSource:
+  groups`, one market per run (UAE, India or US via its Facebook location id), posts from the last
+  21 days (§4.3), vendor words left out as on LinkedIn where the search allows it.
+- **Personal data (default, operator to confirm):** group posters are mostly private individuals,
+  so **no author name or profile link is stored**: only the post text, the group's name, the post
+  link and the date, kept 60 days like LinkedIn posts. Emails or phone numbers in the text are
+  masked. A post becomes an inbox card only when it names the author's own business (same author
+  check as LinkedIn: founder, owner or staff, their own manual work, in the run's market). Every
+  pain post also feeds `/trends` (§5.6) as a pain statement, card or not.
+- **AI read:** one call per post (as §4.1d): pain or not, up to 3 pains, the author's relation and
+  stance, the business named in the post (if any). No comments in the first version.
+- **Cost:** ≈ $0.0024 a post on Apify plus ≈ $0.0004 of AI; a run of 2 topics × 10 posts ≈ $0.05.
+- **Verify first** (build rule): one real run before coding the mapping: the input it accepts, the
+  location ids for the three markets, and the fields a group post really carries.
+- **Not yet:** comments, following specific groups, the rotation and the bandit (Facebook topic
+  arms come after the first runs show yield).
+
 ### 4.1a Company posts (LinkedIn, Reddit)
 
 > **Retired 2026-11-08 for LinkedIn:** the Google digest below is replaced by LinkedIn post search
