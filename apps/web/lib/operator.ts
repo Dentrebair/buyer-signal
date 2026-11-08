@@ -20,10 +20,10 @@ async function assertLocal(): Promise<void> {
 export async function asOperator<T>(fn: (c: pg.PoolClient) => Promise<T>): Promise<T> {
   await assertLocal();
   return withTransaction(pool, async (c) => {
-    await c.query("set local role authenticated");
-    // A page request that stalls mid-transaction (seen 2026-11-08: two held 17 minutes) would keep
-    // one of the 3 connections and its locks for ever; the database ends it instead.
-    await c.query("set local idle_in_transaction_session_timeout = '30s'");
+    // One round trip for both (≈ 150 ms each to the database). The timeout: a page request that
+    // stalls mid-transaction (seen 2026-11-08: two held 17 minutes) would keep one of the 3
+    // connections and its locks for ever; the database ends it instead.
+    await c.query("set local role authenticated; set local idle_in_transaction_session_timeout = '30s'");
     return fn(c);
   });
 }

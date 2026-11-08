@@ -4,6 +4,7 @@
 import { revalidatePath } from "next/cache";
 import { Q, StartBoardRun, StartLiRun } from "@bs/core";
 import { asOperator } from "@/lib/operator.ts";
+import { clearSearchesCache } from "@/lib/sources.ts";
 import { queue } from "@/lib/queue.ts";
 
 export type RunResult = { ok: true; message: string } | { ok: false; message: string };
@@ -36,6 +37,7 @@ export async function runSource(source: "sniff" | "search" | "drift"): Promise<R
 export async function reviveSearch(id: unknown): Promise<RunResult> {
   if (typeof id !== "string" || !/^[0-9a-f-]{36}$/.test(id)) return { ok: false, message: "Unknown search." };
   const n = await asOperator(async (c) => (await c.query("update search_arms set status = 'active', revived_at = now() where id = $1 and status = 'retired'", [id])).rowCount ?? 0);
+  clearSearchesCache();
   revalidatePath("/radar");
   return n ? { ok: true, message: "Revived: the rotation can pick it again." } : { ok: false, message: "That search is not retired." };
 }

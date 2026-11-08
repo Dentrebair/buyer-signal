@@ -74,13 +74,15 @@ export interface ArmRow extends Arm {
   source: string;
 }
 
-// Every arm plus one ArmRun per (run, arm). A run's cost splits evenly across its arms. Its cards
+// Every arm the planner or the Searches table can use (active, or with a run), plus one ArmRun
+// per (run, arm). Retired arms that never ran (the Google digest's 900, §4.1d) are left out. A run's cost splits evenly across its arms. Its cards
 // go to the topic their evidence names (else evenly); a card rejected as not real pain or the
 // wrong company is junk. Runs from before cards recorded their run use the run's card count.
 export async function armHistory(db: Db): Promise<{ arms: ArmRow[]; runs: ArmRun[] }> {
   const arms = (
     await db.query<{ id: string; kind: "job" | "social"; vertical: string | null; country: string; term: string; grp: Arm["group"]; status: string; revived_at: Date | null; source: string }>(
-      "select id, kind, vertical, country, term, grp, status, revived_at, source from search_arms",
+      `select a.id, a.kind, a.vertical, a.country, a.term, a.grp, a.status, a.revived_at, a.source from search_arms a
+        where a.status = 'active' or exists (select 1 from run_arms ra where ra.arm_id = a.id)`,
     )
   ).rows.map((a) => ({ id: a.id, kind: a.kind, vertical: a.vertical, country: a.country, term: a.term, group: a.grp, retired: a.status === "retired", revivedAt: a.revived_at, source: a.source }));
   const runRows = (
