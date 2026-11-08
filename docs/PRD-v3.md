@@ -399,7 +399,20 @@ solves LinkedIn search's missing market filter (§4.1d). Researched 2026-11-08 o
   is delivered (it funds its residential proxy from delivered posts). The location filter keeps
   only place-tagged posts (2-5 % per the actor's docs) and returned none for New York. So the
   market filter does not rescue it.
-- **Next to decide:** follow **specific public groups** instead (`apify/facebook-groups-scraper`,
+- **Groups probed 2026-11-08 ($0.19 more: group search $0.084, posts $0.104).**
+  `parseforge/facebook-groups-search-scraper` (public only, ≥ 1,000 members, ≥ 1 post a day, 10
+  groups a run on the free plan) found 30 active groups for "freight dispatchers trucking", "Dubai
+  small business owners" and "chartered accountants India" (e.g. Load Boards, Dispatchers, Freight
+  Brokers, Owner Operators 150k members, 94 posts a day; I am a small business owner in Dubai 48k,
+  144 a day; CHARTERED ACCOUNTANT [INDIA] 69k). `apify/facebook-groups-scraper` read 40 posts from
+  5 views (newest in three big groups, top posts in one, newest 60 days in a small moderated one):
+  **none** showed an owner or employee describing their own manual work. They were ads and notices
+  (load and truck ads, visa services, rentals, telecom offers, course and tool promotions, a
+  business for sale), one engagement question, and many image-only posts with no text. Large
+  business groups are notice boards. **Facebook is parked.** If revisited: groups around a tool,
+  where people ask for help ("Tally users", "QuickBooks Online users"), since help requests describe
+  the work; probe 2 such groups before building anything.
+- **Earlier idea, superseded by the probe above:** follow **specific public groups** instead (`apify/facebook-groups-scraper`,
   $0.005 a post): groups are relevant by what they are ("Freight Brokers & Dispatchers", "Dubai
   Small Business Owners"), and the group's own location answers the market. Needs a list of
   groups first (a groups-search scraper, ≈ $0.003 a group, or picked by the operator).
