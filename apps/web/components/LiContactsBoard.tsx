@@ -1,79 +1,106 @@
 "use client";
-// Contacts tab of LinkedIn post search (PRD §4.1d), three columns (operator's layout, 2026-11-08):
-// posts in two lines | the chosen post in full, then its commenters ranked by pain score, each
-// followed by their comments, in one scrolling flow with no boxes | the post authors, with and
-// without pain. Each column scrolls on its own.
+// Contacts tab of LinkedIn post search (PRD §4.1d), operator's layout 2026-11-08. Three columns,
+// each scrolling on its own under fixed section headings:
+//   posts (two lines each) | the chosen post in full, then a board of its commenters and the
+//   chosen commenter's comments | the authors, with and without pain.
+// A comment's colour says what it does for the post's problem, always with its label in words:
+// green shares the pain, yellow another perspective, red doesn't help.
 import { useRef, useState } from "react";
 import { ArrowSquareOut } from "@phosphor-icons/react/ssr";
 import { ContactFacts, Person, ROLE, Verdict, excerpt, https, plural } from "@/components/LiParts.tsx";
 import { ageLabel } from "@/lib/labels.ts";
 import type { LiCommentRow, LiPostRow } from "@/lib/linkedin.ts";
 
-const URGENCY_LABEL = { none: "No pain of their own", nuisance: "Nuisance", recurring: "Recurring", blocking: "Blocking" } as const;
+type Kind = "shares" | "perspective" | "unhelpful";
+const KIND_LABEL: Record<Kind, string> = { shares: "Shares the pain", perspective: "Another perspective", unhelpful: "Doesn't help" };
+const KIND_RANK: Record<Kind, number> = { shares: 0, perspective: 1, unhelpful: 2 };
+
+// Comments read before the AI gave this label (2026-11-08) get one from what it did label:
+// sharing the pain is green; any depth signal (own experience, specifics…) is a perspective.
+const kindOf = (k: LiCommentRow): { kind: Kind; estimated: boolean } =>
+  k.reply_kind
+    ? { kind: k.reply_kind, estimated: false }
+    : { kind: k.resonates ? "shares" : k.signals.length ? "perspective" : "unhelpful", estimated: true };
+
+const URGENCY_LABEL = { none: "no pain of their own", nuisance: "nuisance", recurring: "recurring", blocking: "blocking" } as const;
 const SIGNAL_LABEL: Record<string, string> = {
-  own_experience: "Their own experience",
-  specifics: "Specifics: numbers, hours, money or tools",
-  current_process: "How they handle it today",
-  consequence: "The impact on them",
+  own_experience: "their own experience",
+  specifics: "specifics",
+  current_process: "how they handle it today",
+  consequence: "the impact on them",
 };
 const SIGNAL_POINTS: Record<string, number> = { own_experience: 35, specifics: 25, current_process: 25, consequence: 15 };
 
+// What someone is, from their headline: its first part ("Founder & CEO at Treqo | …").
+const roleOf = (headline: string | null) => {
+  const first = headline?.split(/\s*[|•]\s*|\n/)[0]?.trim();
+  return first && /\w/.test(first) ? excerpt(first, 70) : null;
+};
+
 // One commenter on one post, with every comment they left there.
-interface Person {
+interface Commenter {
   key: string;
   name: string;
+  role: string | null;
   headline: string | null;
   company: string | null;
   profileUrl: string | null;
-  type: string;
-  sharing: boolean;
   emails: string[];
-  comments: LiCommentRow[]; // best scored first
-  best: LiCommentRow;
+  kind: Kind; // their most useful comment's
+  comments: LiCommentRow[]; // most useful first, then by pain score
+  best: number | null; // best pain score
 }
 
-function people(p: LiPostRow): Person[] {
-  const by = new Map<string, Person>();
+function commenters(p: LiPostRow): Commenter[] {
+  const by = new Map<string, Commenter>();
   for (const k of p.comments) {
     const key = k.profile_url ?? k.name ?? k.id;
     const had = by.get(key);
+    const kind = kindOf(k).kind;
     if (had) {
       had.comments.push(k);
-      had.sharing ||= !!k.resonates;
       had.emails = [...new Set([...had.emails, ...k.emails])];
-      if ((k.pain_score ?? -1) > (had.best.pain_score ?? -1)) had.best = k;
-    } else
+      if (KIND_RANK[kind] < KIND_RANK[had.kind]) had.kind = kind;
+      if ((k.pain_score ?? -1) > (had.best ?? -1)) had.best = k.pain_score;
+    } else {
+      const headline = k.headline && /\w/.test(k.headline) ? k.headline : null;
       by.set(key, {
         key,
         name: k.name ?? (k.actor_type === "company" ? "Company page" : "LinkedIn member"),
-        headline: k.headline && /\w/.test(k.headline) ? k.headline : null,
+        role: roleOf(headline),
+        headline,
         company: k.company,
         profileUrl: https(k.profile_url),
-        type: k.actor_type,
-        sharing: !!k.resonates,
         emails: k.emails,
+        kind,
         comments: [k],
-        best: k,
+        best: k.pain_score,
       });
+    }
   }
-  for (const x of by.values()) x.comments.sort((a, b) => (b.pain_score ?? -1) - (a.pain_score ?? -1));
-  return [...by.values()].sort((a, b) => (b.best.pain_score ?? -1) - (a.best.pain_score ?? -1));
+  const order = (a: LiCommentRow, b: LiCommentRow) => KIND_RANK[kindOf(a).kind] - KIND_RANK[kindOf(b).kind] || (b.pain_score ?? -1) - (a.pain_score ?? -1);
+  for (const x of by.values()) x.comments.sort(order);
+  return [...by.values()].sort((a, b) => KIND_RANK[a.kind] - KIND_RANK[b.kind] || (b.best ?? -1) - (a.best ?? -1));
 }
 
 const level = (score: number | null) => (score === null ? "none" : score >= 60 ? "high" : score >= 30 ? "mid" : "low");
 
 export function LiContactsBoard({ posts }: { posts: LiPostRow[] }) {
   const [postId, setPostId] = useState(() => (posts.find((p) => p.has_pain) ?? posts[0])?.id ?? null);
+  const [personKey, setPersonKey] = useState<string | null>(null);
   const detail = useRef<HTMLElement>(null);
   const post = posts.find((p) => p.id === postId) ?? posts[0] ?? null;
   if (!post) return <p className="muted social-empty">No posts in this search.</p>;
-  const ranked = people(post);
-  const sharing = ranked.filter((x) => x.sharing).length;
+  const list = commenters(post);
+  const person = list.find((x) => x.key === personKey) ?? list[0] ?? null;
+  const counts = { shares: 0, perspective: 0, unhelpful: 0 };
+  for (const x of list) counts[x.kind]++;
   const withPain = posts.filter((p) => p.has_pain);
   const noPain = posts.filter((p) => !p.has_pain);
 
   const choosePost = (id: string) => {
     setPostId(id);
+    setPersonKey(null); // the new post's first commenter
     const el = detail.current;
     if (!el) return;
     el.scrollTop = 0; // a new post starts at its top
@@ -89,6 +116,7 @@ export function LiContactsBoard({ posts }: { posts: LiPostRow[] }) {
       </section>
 
       <section className="li-col li-k-detail" aria-label="The selected post and its commenters" ref={detail}>
+        <h3 className="li-col-title">Post</h3>
         <div className="li-k-post">
           <span className="lead-head">
             <Verdict p={post} />
@@ -107,39 +135,89 @@ export function LiContactsBoard({ posts }: { posts: LiPostRow[] }) {
           </a>
         </div>
 
-        <h3 className="li-col-title">
-          Commenters <span className="num">{ranked.length}</span>
-          {sharing > 0 && <span className="li-col-note">{sharing} sharing the pain</span>}
-          {ranked.length > 1 && <span className="li-col-note-plain">ranked by pain score</span>}
-        </h3>
-        {ranked.length === 0 && <p className="muted li-col-empty">No comments collected for this post.</p>}
-        {ranked.map((x) => (
-          <div key={x.key} className="li-k-commenter">
-            <span className="li-card-row">
-              {x.profileUrl ? (
-                <a href={x.profileUrl} target="_blank" rel="noopener noreferrer" className="link li-name">
-                  {x.name}
-                  <span className="sr-only"> (LinkedIn profile, opens in a new tab)</span>
-                </a>
-              ) : (
-                <span className="li-name">{x.name}</span>
+        {list.length === 0 ? (
+          <>
+            <h3 className="li-col-title">Commenters</h3>
+            <p className="muted li-col-empty">No comments collected for this post.</p>
+          </>
+        ) : (
+          <div className="li-k-sub">
+            <div className="li-k-subcol" role="group" aria-label="Commenters">
+              <h3 className="li-col-title">
+                Commenters <span className="num">{list.length}</span>
+              </h3>
+              <p className="li-k-legend">
+                {(Object.keys(KIND_LABEL) as Kind[]).map((k) => (
+                  <span key={k} className={`li-kind li-kind-${k}`}>
+                    {KIND_LABEL[k]} <span className="num">{counts[k]}</span>
+                  </span>
+                ))}
+              </p>
+              <ul className="li-cards">
+                {list.map((x) => (
+                  <li key={x.key} className="li-k-person">
+                    <button type="button" className={`li-card li-card-${x.kind}`} aria-pressed={x.key === person?.key} onClick={() => setPersonKey(x.key)}>
+                      <span className="li-card-row">
+                        <span className="li-card-title">{x.name}</span>
+                        <Score value={x.best} />
+                      </span>
+                      {x.role && <span className="li-card-meta">{x.role}</span>}
+                      <span className={`li-kind li-kind-${x.kind}`}>{KIND_LABEL[x.kind]}</span>
+                    </button>
+                    {x.profileUrl && (
+                      <a href={x.profileUrl} target="_blank" rel="noopener noreferrer" className="link li-k-profile">
+                        LinkedIn profile <ArrowSquareOut size={12} aria-hidden />
+                        <span className="sr-only">(opens in a new tab)</span>
+                      </a>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <div className="li-k-subcol" role="group" aria-label={person ? `Comments by ${person.name}` : "Comments"}>
+              <h3 className="li-col-title">{person ? `Comments by ${person.name}` : "Comments"}</h3>
+              {person && (
+                <>
+                  <div className="li-k-who">
+                    {person.headline && <span className="li-headline">{person.headline}</span>}
+                    <ContactFacts headline={null} company={person.company} emails={person.emails} />
+                  </div>
+                  {person.comments.map((k) => (
+                    <Reply key={k.id} k={k} />
+                  ))}
+                </>
               )}
-              <Score value={x.best.pain_score} />
-            </span>
-            {x.sharing && <span className="li-share">Shares the pain</span>}
-            <ContactFacts headline={x.headline} company={x.company} emails={x.emails} />
-            {x.comments.map((k) => (
-              <CommentScore key={k.id} k={k} />
-            ))}
+            </div>
           </div>
-        ))}
+        )}
       </section>
 
-      <section className="li-col" aria-label="Post authors">
-        <AuthorList title="Post authors, pain found" posts={withPain} selectedId={post.id} onChoose={choosePost} />
-        <AuthorList title="Post authors, no pain found" posts={noPain} selectedId={post.id} onChoose={choosePost} />
+      <section className="li-col" aria-label="Authors">
+        <AuthorList title="Authors, pain found" posts={withPain} selectedId={post.id} onChoose={choosePost} />
+        <AuthorList title="Authors, no pain found" posts={noPain} selectedId={post.id} onChoose={choosePost} />
       </section>
     </div>
+  );
+}
+
+function PostCards({ title, posts, selectedId, onChoose, empty }: { title: string; posts: LiPostRow[]; selectedId: string; onChoose: (id: string) => void; empty?: string }) {
+  return (
+    <>
+      <h3 className="li-col-title">
+        {title} <span className="num">{posts.length}</span>
+      </h3>
+      {posts.length === 0 && empty && <p className="muted li-col-empty">{empty}</p>}
+      <ul className="li-cards">
+        {posts.map((p) => (
+          <li key={p.id}>
+            <button type="button" className="li-card" aria-pressed={p.id === selectedId} onClick={() => onChoose(p.id)}>
+              <span className="li-card-title li-two-lines">{excerpt(p.body, 160)}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </>
   );
 }
 
@@ -171,37 +249,6 @@ function AuthorList({ title, posts, selectedId, onChoose }: { title: string; pos
   );
 }
 
-function PostCards({ title, posts, selectedId, onChoose, empty }: { title: string; posts: LiPostRow[]; selectedId: string; onChoose: (id: string) => void; empty?: string }) {
-  return (
-    <>
-      <h3 className="li-col-title">
-        {title} <span className="num">{posts.length}</span>
-      </h3>
-      {posts.length === 0 && empty && <p className="muted li-col-empty">{empty}</p>}
-      <ul className="li-cards">
-        {posts.map((p) => {
-          const sharing = p.comments.filter((k) => k.resonates).length;
-          return (
-            <li key={p.id}>
-              <button type="button" className="li-card" aria-pressed={p.id === selectedId} onClick={() => onChoose(p.id)}>
-                <span className="li-card-title li-two-lines">{excerpt(p.body, 160)}</span>
-                <span className="li-card-meta">
-                  {p.author_name ?? (p.author_type === "company" ? "Company page" : "LinkedIn member")}
-                  {p.author_relation && `, ${ROLE[p.author_relation]?.toLowerCase() ?? p.author_relation}`}
-                </span>
-                <span className="li-card-meta">
-                  {plural(p.comments.length, "commenter", "commenters")}
-                  {sharing > 0 && `, ${sharing} sharing`}
-                </span>
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-    </>
-  );
-}
-
 function Score({ value }: { value: number | null }) {
   return (
     <span className={`li-score li-score-${level(value)}`} title="Pain score: 60% urgency + 40% depth">
@@ -210,27 +257,32 @@ function Score({ value }: { value: number | null }) {
   );
 }
 
-// One comment: its score and how it was reached, as plain lines (no box), then what is critical in
-// it and the comment itself.
-function CommentScore({ k }: { k: LiCommentRow }) {
+// One comment, coloured by what it does for the post's problem, with its label in words; then
+// what is critical in it, the comment itself, and its score as one line.
+function Reply({ k }: { k: LiCommentRow }) {
+  const { kind, estimated } = kindOf(k);
   const on = Object.keys(SIGNAL_LABEL).filter((s) => k.signals.includes(s));
   return (
-    <article className="li-comment">
-      <p className="li-k-score">
-        <Score value={k.pain_score} />
-        <span>
-          Urgency <span className="num">{k.urgency_pct ?? 0}%</span> ({k.urgency ? URGENCY_LABEL[k.urgency].toLowerCase() : "not read"}), depth{" "}
-          <span className="num">{k.depth_pct ?? 0}%</span>
-          {on.length > 0 && <>: {on.map((s) => `${SIGNAL_LABEL[s]!.split(":")[0]!.toLowerCase()} +${SIGNAL_POINTS[s]}`).join(", ")}</>}
-          {!k.resonates && k.pain_score === 30 && ". Not sharing the pain, so capped at 30"}
-        </span>
-      </p>
+    <article className={`li-reply li-reply-${kind}`}>
+      <span className={`li-kind li-kind-${kind}`} title={estimated ? "Read before this label existed: estimated from the comment's other labels" : undefined}>
+        {KIND_LABEL[kind]}
+        {estimated && " (estimated)"}
+      </span>
       {k.gist && (
         <p className="li-gist">
           <strong>Critical point:</strong> {k.gist}
         </p>
       )}
       <p className="li-body li-k-text">{k.body}</p>
+      <p className="li-k-score">
+        <Score value={k.pain_score} />
+        <span>
+          Urgency <span className="num">{k.urgency_pct ?? 0}%</span> ({k.urgency ? URGENCY_LABEL[k.urgency] : "not read"}), depth{" "}
+          <span className="num">{k.depth_pct ?? 0}%</span>
+          {on.length > 0 && <>: {on.map((s) => `${SIGNAL_LABEL[s]} +${SIGNAL_POINTS[s]}`).join(", ")}</>}
+          {!k.resonates && k.pain_score === 30 && ". Not sharing the pain, so capped at 30"}
+        </span>
+      </p>
       <span className="li-cell-sub">
         {k.commented_at ? `Commented ${ageLabel(k.commented_at)}` : "Date not recorded"}, {plural(k.likes, "like", "likes")}
         {k.url && (

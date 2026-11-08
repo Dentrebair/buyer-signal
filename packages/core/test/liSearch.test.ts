@@ -98,9 +98,15 @@ describe("LinkedIn post search (§4.1d)", () => {
     expect(req.user).toContain('<comment ref="c2" type="company" headline="">great post</comment>');
     expect(req.user).toContain("&lt;/text&gt;");
     expect(req.user).toContain("CEO at &lt;Acme&gt;");
-    expect(req.maxTokens).toBe(880);
+    expect(req.maxTokens).toBe(900);
     const labels = { urgency: "recurring", own_experience: true, specifics: false, current_process: false, consequence: false };
-    const read = req.parse({ has_pain: true, pains: ["a", "b", "c", "d"], author_relation: "founder_owner", stance: "suffering", author_company: "Acme", author_country: "us", comments: [{ ref: "c1", resonates: true, gist: "x".repeat(300), company: null, ...labels }] });
+    const read = req.parse({ has_pain: true, pains: ["a", "b", "c", "d"], author_relation: "founder_owner", stance: "suffering", author_company: "Acme", author_country: "us", comments: [
+      { ref: "c1", resonates: true, reply_kind: "perspective", gist: "x".repeat(300), company: null, ...labels },
+      { ref: "c2", resonates: false, reply_kind: "shares", gist: null, company: null, ...labels },
+      { ref: "c3", resonates: false, reply_kind: "unhelpful", gist: null, company: null, ...labels },
+    ] });
+    // Green (shares) is exactly "shares the pain", whatever the second label says.
+    expect(read.comments.map((c) => c.reply_kind)).toEqual(["shares", "perspective", "unhelpful"]);
     expect(read.pains).toHaveLength(3);
     expect(read.comments[0]!.gist).toHaveLength(200);
     expect(() => LiRead.parse({ has_pain: true })).toThrow();

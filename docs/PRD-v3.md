@@ -328,9 +328,13 @@ headline. Kept **60 days**, then purged (poll-runs).
 - **UI (`/linkedin`):** a run form (vertical, topic, posts, comments per post, cost shown), the runs,
   and three tabs for a run: **Search** (every post found); **Posts**, a three-column board (posts
   with pain first | the selected post | its author and commenters); **Contacts**, three columns
-  (operator's layout, 2026-11-08: posts in two lines | the full post, then its commenters ranked
-  by pain score, each followed by their comments and each score's breakdown, in one flow with no
-  boxes | the post authors with and without pain).
+  (operator's layout, 2026-11-08): posts in two lines | the full post, then a board of its
+  commenters (name, profile link, what they are from their headline, pain score) and the chosen
+  commenter's comments | the authors with and without pain. Headings stay fixed while each
+  column scrolls. A comment is coloured by what it does for the post's problem, with its label in
+  words: green shares the pain, yellow another perspective, red doesn't help. The AI read labels
+  it (`reply_kind`, migration 0020; "shares" exactly when it resonates); comments read before
+  that show a colour estimated from their other labels, marked "(estimated)".
   Every column scrolls on its own.
 - **Inbox cards and the bandit (agreed and built 2026-11-08); the Google digest retired.** The read
   also returns `author_country` (in / ae / us / other / unknown, from clear clues only: the actor

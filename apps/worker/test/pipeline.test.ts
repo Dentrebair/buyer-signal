@@ -268,9 +268,9 @@ describe.skipIf(!process.env.DATABASE_URL)("worker pipeline (database)", { timeo
         ? {
             has_pain: true, pains: ["Freight invoices checked by hand"], author_relation: "employee", stance: "suffering", author_company: "Li Test Freight", author_country: "us",
             comments: [
-              { ref: "c1", resonates: false, gist: "Praise", company: "Li Test Beta", ...noPain },
-              { ref: "c2", resonates: true, gist: "Spends a week a month checking invoices", company: "Li Test Beta", ...weekly },
-              { ref: "c9", resonates: true, gist: "not in the prompt", company: null, ...weekly },
+              { ref: "c1", resonates: false, reply_kind: "unhelpful", gist: "Praise", company: "Li Test Beta", ...noPain },
+              { ref: "c2", resonates: true, reply_kind: "shares", gist: "Spends a week a month checking invoices", company: "Li Test Beta", ...weekly },
+              { ref: "c9", resonates: true, reply_kind: "shares", gist: "not in the prompt", company: null, ...weekly },
             ],
           }
         : { has_pain: false, pains: ["ignored when no pain"], author_relation: "employee", stance: "commenting", author_company: null, author_country: "unknown", comments: [] };
@@ -312,14 +312,14 @@ describe.skipIf(!process.env.DATABASE_URL)("worker pipeline (database)", { timeo
       [P5]: { status: "read", has_pain: true, pains: ["Invoices keyed manually"], author_company: "Li Test Freight", author_country: "other", card_outcome: "no_market", emails: ["ops@litest.example"] },
     });
     const comments = (await pool.query(
-      "select k.comment_id, k.is_author, k.resonates, k.gist, k.company, k.pain_score, k.signals from li_comments k join li_posts p on p.id = k.li_post_id where p.run_id = $1 order by k.comment_id",
+      "select k.comment_id, k.is_author, k.resonates, k.reply_kind, k.gist, k.company, k.pain_score, k.signals from li_comments k join li_posts p on p.id = k.li_post_id where p.run_id = $1 order by k.comment_id",
       [runRow.id],
     )).rows;
     expect(comments).toEqual([
       // recurring 70 × 0.6 + own experience 35 × 0.4 = 56; praise scores 0.
-      { comment_id: "7600000000000000001", is_author: false, resonates: true, gist: "Spends a week a month checking invoices", company: "Li Test Beta", pain_score: 56, signals: ["own_experience"] },
-      { comment_id: "7600000000000000002", is_author: false, resonates: false, gist: "Praise", company: "Li Test Beta", pain_score: 0, signals: [] },
-      { comment_id: "7600000000000000003", is_author: true, resonates: null, gist: null, company: null, pain_score: null, signals: [] },
+      { comment_id: "7600000000000000001", is_author: false, resonates: true, reply_kind: "shares", gist: "Spends a week a month checking invoices", company: "Li Test Beta", pain_score: 56, signals: ["own_experience"] },
+      { comment_id: "7600000000000000002", is_author: false, resonates: false, reply_kind: "unhelpful", gist: "Praise", company: "Li Test Beta", pain_score: 0, signals: [] },
+      { comment_id: "7600000000000000003", is_author: true, resonates: null, reply_kind: null, gist: null, company: null, pain_score: null, signals: [] },
     ]);
     // Only the own-business pain post in our markets goes on to a card.
     const cards = sent.filter((x) => x.queue === Q.cardLiPost);

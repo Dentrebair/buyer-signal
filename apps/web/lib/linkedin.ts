@@ -35,6 +35,7 @@ export interface LiCommentRow {
   urgency_pct: number | null;
   depth_pct: number | null;
   pain_score: number | null;
+  reply_kind: "shares" | "perspective" | "unhelpful" | null; // null: read before 2026-11-08's label
 }
 
 export interface LiPostRow {
@@ -106,7 +107,7 @@ export function loadLinkedin(runId?: string | null): Promise<LinkedinPage> {
       const comments = (
         await c.query<LiCommentRow & { li_post_id: string }>(
           `select k.li_post_id, k.id, k.url, k.body, k.actor_type, k.name, k.headline, k.profile_url, k.company, k.gist, k.resonates, k.emails,
-                  k.commented_at, k.likes, k.urgency, k.signals, k.urgency_pct, k.depth_pct, k.pain_score
+                  k.commented_at, k.likes, k.urgency, k.signals, k.urgency_pct, k.depth_pct, k.pain_score, k.reply_kind
              from li_comments k join li_posts p on p.id = k.li_post_id
             where p.run_id = $1 and not k.is_author
             order by k.resonates desc nulls last, k.pain_score desc nulls last, k.likes desc`,

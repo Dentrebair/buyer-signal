@@ -194,10 +194,16 @@ export function commentPainScore(
 
 // ── The AI read: one call per post, with its comments ───────────────────────
 export const PainUrgency = z.enum(["none", "nuisance", "recurring", "blocking"]);
+// What a comment does for the post's problem (operator's colours, 2026-11-08): shares = agrees and
+// shares the pain (green); perspective = adds another view, cause, workaround or experience
+// (yellow); unhelpful = praise, thanks, tags, pitches, off-topic (red).
+export const ReplyKind = z.enum(["shares", "perspective", "unhelpful"]);
+export type ReplyKind = z.infer<typeof ReplyKind>;
 export type PainUrgency = z.infer<typeof PainUrgency>;
 export const LiCommentRead = z.object({
   ref: z.string(), // "c1", "c2": the comment's number in the prompt
   resonates: z.boolean(),
+  reply_kind: ReplyKind,
   gist: z.string().nullable(),
   company: z.string().nullable(),
   // What the scoring rules need (commentPainScore): the AI labels, the code scores.
@@ -251,6 +257,7 @@ Return JSON only, matching the schema:
 - author_country: where the author's business operates, from the headline, the post or the company: in (India), ae (United Arab Emirates), us (United States), other (somewhere else), unknown (nothing says). Use clear clues only: a city or state, a currency (₹, AED, $ with a US place), a regulator or tax (GST, Ejari, IRS). Never guess from a name.
 - comments: one entry per <comment>, in order, with its ref.
   - resonates: true only when the commenter shares their own experience of the same or a related problem, frustration or pain ("we spend two days a month on this", "this is tough when 10 people do this job"). Agreement, praise, advice, questions and sales pitches are false.
+  - reply_kind: shares when resonates is true. perspective when the comment adds something real about the problem without sharing it as their own pain: a different view, a cause, a workaround, a question that digs in, advice from experience. unhelpful for praise, thanks, tags, generic agreement, sales pitches and anything off-topic.
   - gist: what is critical in the comment, under 20 words, in your words: the pain or experience they describe, else the point they make. null for an empty or one-word comment.
   - company: the commenter's company from their headline, null if none is named.
   - urgency: how bad the pain the commenter describes is for them: none (no pain of their own), nuisance (occasional annoyance), recurring (regularly costs them time or money), blocking (stops work, loses money or stops them growing).
@@ -280,8 +287,17 @@ export function buildLiRead(post: { text: string; authorHeadline: string | null;
     jsonSchema: toLlmJsonSchema(LiRead),
     parse: (raw) => {
       const r = LiRead.parse(raw);
-      return { ...r, pains: r.pains.slice(0, 3).map((p) => p.slice(0, 140)), comments: r.comments.map((c) => ({ ...c, gist: c.gist?.slice(0, 200) ?? null })) };
+      return {
+        ...r,
+        pains: r.pains.slice(0, 3).map((p) => p.slice(0, 140)),
+        // Sharing the pain is green whatever the AI's second label says, and only sharing is.
+        comments: r.comments.map((c) => ({
+          ...c,
+          gist: c.gist?.slice(0, 200) ?? null,
+          reply_kind: c.resonates ? ("shares" as const) : c.reply_kind === "shares" ? ("perspective" as const) : c.reply_kind,
+        })),
+      };
     },
-    maxTokens: 600 + comments.length * 140,
+    maxTokens: 600 + comments.length * 150,
   };
 }

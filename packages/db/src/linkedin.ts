@@ -82,9 +82,10 @@ export async function saveLiRead(c: pg.PoolClient, id: string, read: LiRead, com
     if (!seen) continue; // a ref the prompt never had
     const pain = commentPainScore(k, seen.body);
     await c.query(
-      `update li_comments set resonates = $2, gist = $3, company = $4, urgency = $6, signals = $7, urgency_pct = $8, depth_pct = $9, pain_score = $10
+      `update li_comments set resonates = $2, gist = $3, company = $4, urgency = $6, signals = $7, urgency_pct = $8, depth_pct = $9, pain_score = $10,
+                              reply_kind = $11
         where id = $1 and li_post_id = $5`,
-      [seen.id, k.resonates, k.gist, k.company?.trim() || null, id, k.urgency, pain.signals, pain.urgencyPct, pain.depthPct, pain.score],
+      [seen.id, k.resonates, k.gist, k.company?.trim() || null, id, k.urgency, pain.signals, pain.urgencyPct, pain.depthPct, pain.score, k.reply_kind],
     );
   }
 }
