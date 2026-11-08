@@ -129,5 +129,8 @@ export function buildDrafts(c: DraftCompany): LlmRequest<z.infer<typeof DraftOut
       return { emails, warning_banner: r.warning_banner?.trim() || null };
     },
     maxTokens: 1600,
+    // Claude Sonnet 5.5 refuses to run with reasoning off (2026-11-08); 1,024 is the smallest budget
+    // Anthropic models accept, ≈ $0.01 more a draft.
+    reasoningTokens: 1024,
   };
 }

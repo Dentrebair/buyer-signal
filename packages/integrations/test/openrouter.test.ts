@@ -58,6 +58,15 @@ describe("OpenRouterClient", () => {
     await expect(new OpenRouterClient({ env, fetch: bad.f, retryDelaysMs: [0, 0, 0] }).json("extraction", req)).rejects.toThrow(/401/);
   });
 
+  it("reasoning is off unless a request asks for a budget, which is added on top of its output budget", async () => {
+    const plain = fakeFetch([completion(reply)]);
+    await new OpenRouterClient({ env, fetch: plain.f }).json("extraction", req);
+    expect(JSON.parse(plain.calls[0]!.body as string)).toMatchObject({ reasoning: { enabled: false }, max_tokens: 1200 });
+    const thinking = fakeFetch([completion(reply)]);
+    await new OpenRouterClient({ env, fetch: thinking.f }).json("extraction", { ...req, maxTokens: 1600, reasoningTokens: 1024 });
+    expect(JSON.parse(thinking.calls[0]!.body as string)).toMatchObject({ reasoning: { max_tokens: 1024 }, max_tokens: 2624 });
+  });
+
   it("web search: sends the web plugin and returns the cited URLs", async () => {
     const res = new Response(
       JSON.stringify({

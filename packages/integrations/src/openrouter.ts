@@ -73,7 +73,7 @@ export class OpenRouterClient implements LlmClient {
     // ~3 characters per token is a safe overestimate for English prompts and JSON schemas.
     const promptTokens = Math.ceil((input.system.length + input.user.length + JSON.stringify(input.jsonSchema).length) / 3);
     const search = input.webSearch ? SEARCH_FEE_USD + input.webSearch.maxResults * SEARCH_TOKENS_PER_RESULT * p.prompt : 0;
-    return promptTokens * p.prompt + (input.maxTokens ?? this.maxTokens) * p.completion + search;
+    return promptTokens * p.prompt + ((input.maxTokens ?? this.maxTokens) + (input.reasoningTokens ?? 0)) * p.completion + search;
   }
 
   async json<T>(task: LlmTask, input: LlmRequest<T>): Promise<LlmCallResult<T>> {
@@ -97,16 +97,17 @@ export class OpenRouterClient implements LlmClient {
   private async complete(model: string, input: LlmRequest<unknown>) {
     const body = JSON.stringify({
       model,
-      max_tokens: input.maxTokens ?? this.maxTokens,
+      max_tokens: (input.maxTokens ?? this.maxTokens) + (input.reasoningTokens ?? 0),
       messages: [
         { role: "system", content: input.system },
         { role: "user", content: input.user },
       ],
       response_format: { type: "json_schema", json_schema: { name: input.schemaName, strict: true, schema: input.jsonSchema } },
       provider: { require_parameters: true },
-      // No hidden reasoning: it is billed as output and, when long, cut the JSON short (2026-11-08:
-      // 385 of 480 tokens spent reasoning, "Unterminated string"). Every task here is extraction.
-      reasoning: { enabled: false },
+      // No hidden reasoning by default: it is billed as output and, when long, cut the JSON short
+      // (2026-11-08: 385 of 480 tokens spent reasoning, "Unterminated string"). A request that
+      // needs it (drafts) gets its own budget on top of its output (LlmRequest.reasoningTokens).
+      reasoning: input.reasoningTokens ? { max_tokens: input.reasoningTokens } : { enabled: false },
       usage: { include: true },
       ...(input.webSearch ? { plugins: [{ id: "web", engine: "parallel", mode: "fast", max_results: input.webSearch.maxResults }] } : {}),
     });

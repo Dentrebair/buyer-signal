@@ -32,6 +32,9 @@ export interface LlmRequest<T> {
   parse: (raw: unknown) => T;
   webSearch?: { maxResults: number }; // let the model search the web first (resolve, §5.1 step 5)
   maxTokens?: number; // output budget, when the client default (1,200) is too small or too large
+  // Hidden reasoning budget, added on top of maxTokens so it can never cut the answer short. Off
+  // when absent; some models refuse to run without it (Claude Sonnet 5.5, 2026-11-08).
+  reasoningTokens?: number;
 }
 
 export interface LlmClient {
