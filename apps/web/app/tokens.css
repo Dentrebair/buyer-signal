@@ -29,6 +29,10 @@
   --opt-indigo: oklch(42% 0.14 280); --opt-indigo-bg: oklch(94% 0.03 280);  --opt-indigo-line: oklch(82% 0.06 280);
   --opt-violet: oklch(44% 0.14 305); --opt-violet-bg: oklch(94% 0.035 305); --opt-violet-line: oklch(82% 0.07 305);
   --opt-slate: oklch(40% 0.02 245);  --opt-slate-bg: oklch(92% 0.008 245);  --opt-slate-line: oklch(80% 0.012 245);
+  /* Chart series (Health dashboard): the dataviz reference palette's first three slots, validated
+     all-pairs for colour-blind readers on --color-sheet (2026-11-08). Slot 3 is under 3:1 on light
+     paper, so every chart carries a legend and a table view. */
+  --viz-1: #2a78d6; --viz-2: #eb6834; --viz-3: #1baf7a;
 }
 
 /* Dark (the app's default, data-theme on <html>, ThemeToggle): re-derived per Hallmark
@@ -49,4 +53,5 @@
   --opt-indigo: oklch(80% 0.09 280); --opt-indigo-bg: oklch(26% 0.05 280);  --opt-indigo-line: oklch(40% 0.08 280);
   --opt-violet: oklch(81% 0.10 305); --opt-violet-bg: oklch(26% 0.05 305);  --opt-violet-line: oklch(40% 0.08 305);
   --opt-slate: oklch(80% 0.015 245); --opt-slate-bg: oklch(25% 0.012 245);  --opt-slate-line: oklch(36% 0.014 245);
+  --viz-1: #3987e5; --viz-2: #d95926; --viz-3: #199e70;
 }

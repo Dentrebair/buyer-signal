@@ -269,6 +269,15 @@ cards, then chases junk. Two checks, both on the Sources page under **Health**:
   model (≈ $0.0004 a post, inside the monthly AI cap) and stores pain and lead precision and recall,
   agreement, the disagreements, the model and the prompt's hash. Run it after any prompt or model
   change, and weekly. Target: 50 posts, at least 10 leads.
+- **Health dashboard (`/health`, built 2026-11-08):** one range picker (7 / 30 / 90 days, against the
+  same length before) scopes headline tiles with daily sparklines (new cards, AI and Apify spend,
+  AI cost per card, LinkedIn pain rate, AI read failures), spend and cards per day, runs by source,
+  the LinkedIn funnel (read → pain → card gate → card) and why pain posts were not cards, the
+  company-check agent (checks, website found, steps, cost, how checks ended), the drift table and
+  the AI test set (scores per eval run as a line chart, and the latest disagreements). Charts are
+  SVG in the app's tokens (`--viz-1..3`, the dataviz reference palette's first three slots,
+  validated for colour-blind readers in both themes), each with a legend and a table view.
+  Sources and the inbox link to it.
 - **Not yet:** an eval of the company-check agent. It needs ground truth: the operator's Sent cards
   (right website) and `wrong_company` rejections; none exist yet (2026-11-08: 62 cards, 0 verdicts).
 

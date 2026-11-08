@@ -1,5 +1,5 @@
-// Health (agreed 2026-11-08): the latest drift check and the AI test set's last score, for the
-// Sources page and the inbox banner.
+// Health (agreed 2026-11-08): the latest drift check and the AI test set's runs, for the Health
+// dashboard and the inbox banner.
 import { DRIFT_METRICS, type DriftMetric } from "@bs/core";
 import { asOperator } from "./operator.ts";
 
@@ -34,6 +34,8 @@ export interface Health {
   drift: DriftRow[];
   evals: EvalRunRow[]; // newest first
   labelled: { lead: number; pain: number; none: number };
+  // The latest run's disagreements, with the labelled post (no names: eval_cases is anonymised).
+  disagreements: { text: string; label: string; ai: string; why: string }[];
 }
 
 export function loadHealth(): Promise<Health> {
@@ -57,12 +59,20 @@ export function loadHealth(): Promise<Health> {
         `select created_at, model, prompt_hash, cases, (score -> 'pain' ->> 'precision')::float pain_precision, (score -> 'pain' ->> 'recall')::float pain_recall,
                 (score -> 'lead' ->> 'precision')::float lead_precision, (score -> 'lead' ->> 'recall')::float lead_recall,
                 (score ->> 'agreement')::float agreement, jsonb_array_length(score -> 'disagreements') disagreements
-           from eval_runs order by created_at desc limit 5`,
+           from eval_runs order by created_at desc limit 20`,
       )
     ).rows;
     const labelled = { lead: 0, pain: 0, none: 0 };
     for (const r of (await c.query<{ label: keyof typeof labelled; n: number }>("select label, count(*)::int n from eval_cases group by 1")).rows) labelled[r.label] = r.n;
-    return { day: rows[0]?.day ?? null, drift, evals, labelled };
+    const disagreements = (
+      await c.query<{ text: string; label: string; ai: string; why: string }>(
+        `select ec.text, d ->> 'label' label, case when (d ->> 'lead')::boolean then 'lead' when (d ->> 'pain')::boolean then 'pain' else 'none' end ai, d ->> 'why' why
+           from (select score from eval_runs order by created_at desc limit 1) r
+           cross join jsonb_array_elements(r.score -> 'disagreements') d
+           join eval_cases ec on ec.id = (d ->> 'id')::uuid`,
+      )
+    ).rows;
+    return { day: rows[0]?.day ?? null, drift, evals, labelled, disagreements };
   });
 }
 
