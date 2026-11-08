@@ -327,9 +327,9 @@ headline. Kept **60 days**, then purged (poll-runs).
   0–10.
 - **UI (`/linkedin`):** a run form (vertical, topic, posts, comments per post, cost shown), the runs,
   and three tabs for a run: **Search** (every post found); **Posts**, a three-column board (posts
-  with pain first | the selected post | its author and commenters); **Contacts**, a five-column
-  kanban (posts in two lines | the full post | post authors with and without pain | the post's
-  commenters ranked by pain score | the chosen commenter's comments with the score's breakdown).
+  with pain first | the selected post | its author and commenters); **Contacts**, two columns
+  (operator's layout, 2026-11-08: posts in two lines | the full post, its author, then its
+  commenters ranked by pain score, each with their comments and each score's breakdown).
   Every column scrolls on its own.
 - **Inbox cards and the bandit (agreed and built 2026-11-08); the Google digest retired.** The read
   also returns `author_country` (in / ae / us / other / unknown, from clear clues only: the actor

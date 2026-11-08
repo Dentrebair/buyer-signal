@@ -1,10 +1,10 @@
 "use client";
-// Contacts tab of LinkedIn post search (PRD §4.1d) as a kanban, each column scrolling on its own:
-// posts | the post | post authors (with and without pain) | its commenters, ranked by pain score |
-// the chosen commenter's comments with how their score was reached.
-import { useMemo, useState } from "react";
+// Contacts tab of LinkedIn post search (PRD §4.1d) as two columns, each scrolling on its own:
+// posts | the chosen post, with its author and then its commenters, ranked by pain score, each
+// with their comments and how each comment's score was reached (operator's layout, 2026-11-08).
+import { useRef, useState } from "react";
 import { ArrowSquareOut } from "@phosphor-icons/react/ssr";
-import { ROLE, Verdict, excerpt, https, plural } from "@/components/LiParts.tsx";
+import { ContactFacts, Person, ROLE, Verdict, excerpt, https, plural } from "@/components/LiParts.tsx";
 import { ageLabel } from "@/lib/labels.ts";
 import type { LiCommentRow, LiPostRow } from "@/lib/linkedin.ts";
 
@@ -63,41 +63,32 @@ const level = (score: number | null) => (score === null ? "none" : score >= 60 ?
 
 export function LiContactsBoard({ posts }: { posts: LiPostRow[] }) {
   const [postId, setPostId] = useState(() => (posts.find((p) => p.has_pain) ?? posts[0])?.id ?? null);
+  const detail = useRef<HTMLElement>(null);
   const post = posts.find((p) => p.id === postId) ?? posts[0] ?? null;
-  const ranked = useMemo(() => (post ? people(post) : []), [post]);
-  const [personKey, setPersonKey] = useState<string | null>(null);
-  const person = ranked.find((x) => x.key === personKey) ?? ranked[0] ?? null;
+  if (!post) return <p className="muted social-empty">No posts in this search.</p>;
+  const ranked = people(post);
+  const sharing = ranked.filter((x) => x.sharing).length;
+  const withPain = posts.filter((p) => p.has_pain);
+  const noPain = posts.filter((p) => !p.has_pain);
 
   const choosePost = (id: string) => {
     setPostId(id);
-    setPersonKey(null); // the new post's top-ranked commenter
-    for (const col of document.querySelectorAll<HTMLElement>(".li-kanban .li-k-reset")) col.scrollTop = 0;
+    const el = detail.current;
+    if (!el) return;
+    el.scrollTop = 0; // a new post starts at its top
+    // Stacked (a phone), the post sits below the list: bring it into view.
+    const stacked = getComputedStyle(el.parentElement!).gridTemplateColumns.split(" ").length === 1;
+    if (stacked) el.scrollIntoView({ block: "start" });
   };
-  if (!post) return <p className="muted social-empty">No posts in this search.</p>;
-  const withPain = posts.filter((p) => p.has_pain);
-  const noPain = posts.filter((p) => !p.has_pain);
 
   return (
     <div className="li-kanban">
       <section className="li-col" aria-label="Posts">
-        <h3 className="li-col-title">
-          Posts <span className="num">{posts.length}</span>
-        </h3>
-        <ul className="li-cards">
-          {posts.map((p) => (
-            <li key={p.id}>
-              <button type="button" className="li-card" aria-pressed={p.id === post.id} onClick={() => choosePost(p.id)}>
-                <span className="li-card-title li-two-lines">{excerpt(p.body, 160)}</span>
-                <span className="li-card-meta">
-                  {p.has_pain ? "Pain found" : "No pain found"}, {plural(p.comments.length, "commenter", "commenters")}
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
+        <PostCards title="With pain" posts={withPain} selectedId={post.id} onChoose={choosePost} empty="No post shows a pain point, challenge or problem." />
+        {noPain.length > 0 && <PostCards title="No pain found" posts={noPain} selectedId={post.id} onChoose={choosePost} />}
       </section>
 
-      <section className="li-col li-k-reset" aria-label="The selected post">
+      <section className="li-col li-k-detail" aria-label="The selected post and its contacts" ref={detail}>
         <h3 className="li-col-title">Post</h3>
         <span className="lead-head">
           <Verdict p={post} />
@@ -114,104 +105,77 @@ export function LiContactsBoard({ posts }: { posts: LiPostRow[] }) {
           Open on LinkedIn <ArrowSquareOut size={13} aria-hidden />
           <span className="sr-only">(opens in a new tab)</span>
         </a>
-      </section>
 
-      <section className="li-col" aria-label="Post authors">
-        <h3 className="li-col-title">
-          Post authors, pain found <span className="num">{withPain.length}</span>
-        </h3>
-        <AuthorCards posts={withPain} selectedId={post.id} onChoose={choosePost} />
-        <h3 className="li-col-title">
-          Post authors, no pain found <span className="num">{noPain.length}</span>
-        </h3>
-        <AuthorCards posts={noPain} selectedId={post.id} onChoose={choosePost} />
-      </section>
+        <h3 className="li-col-title">Post author</h3>
+        <div className="li-person">
+          <span className="li-card-row">
+            <Person name={post.author_name} url={post.author_url} type={post.author_type} />
+            {post.author_relation && <span className="verdict">{ROLE[post.author_relation] ?? post.author_relation}</span>}
+          </span>
+          <ContactFacts headline={post.author_headline} company={post.author_company} emails={post.emails} website={post.author_website} />
+        </div>
 
-      <section className="li-col li-k-reset" aria-label="Commenters on the selected post">
         <h3 className="li-col-title">
           Commenters <span className="num">{ranked.length}</span>
-          <span className="li-col-note-plain">ranked by pain score</span>
+          {sharing > 0 && <span className="li-col-note">{sharing} sharing the pain</span>}
+          {ranked.length > 1 && <span className="li-col-note-plain">ranked by pain score</span>}
         </h3>
         {ranked.length === 0 && <p className="muted li-col-empty">No comments collected for this post.</p>}
-        <ul className="li-cards">
-          {ranked.map((x) => (
-            <li key={x.key} className="li-card-wrap">
-              <button type="button" className={`li-card${x.sharing ? " is-sharing" : ""}`} aria-pressed={x.key === person?.key} onClick={() => setPersonKey(x.key)}>
-                <span className="li-card-row">
-                  <span className="li-card-title">{x.name}</span>
-                  <Score value={x.best.pain_score} />
-                </span>
-                {x.headline && <span className="li-card-meta li-two-lines">{x.headline}</span>}
-                {x.sharing && <span className="li-share">Shares the pain</span>}
-              </button>
-              {x.profileUrl && (
-                <a href={x.profileUrl} target="_blank" rel="noopener noreferrer" className="link li-card-link">
-                  LinkedIn profile <ArrowSquareOut size={12} aria-hidden />
-                  <span className="sr-only">(opens in a new tab)</span>
-                </a>
-              )}
-            </li>
-          ))}
-        </ul>
-      </section>
-
-      <section className="li-col li-k-reset" aria-label="Comments of the selected commenter">
-        <h3 className="li-col-title">Comments</h3>
-        {!person ? (
-          <p className="muted li-col-empty">Pick a commenter to read their comments.</p>
-        ) : (
-          <>
+        {ranked.map((x) => (
+          <article key={x.key} className={`li-commenter${x.sharing ? " is-sharing" : ""}`} aria-label={`${x.name}, pain score ${x.best.pain_score ?? "not scored"}`}>
             <div className="li-person">
-              {person.profileUrl ? (
-                <a href={person.profileUrl} target="_blank" rel="noopener noreferrer" className="link li-name">
-                  {person.name}
-                  <span className="sr-only"> (LinkedIn profile, opens in a new tab)</span>
-                </a>
-              ) : (
-                <span className="li-name">{person.name}</span>
-              )}
-              {person.headline && <span className="li-headline">{person.headline}</span>}
-              {person.company && <span className="li-cell-sub">Company: {person.company}</span>}
-              {person.emails.map((e) => (
-                <a key={e} href={`mailto:${e}`} className="link li-cell-sub">
-                  {e}
-                </a>
-              ))}
+              <span className="li-card-row">
+                {x.profileUrl ? (
+                  <a href={x.profileUrl} target="_blank" rel="noopener noreferrer" className="link li-name">
+                    {x.name}
+                    <span className="sr-only"> (LinkedIn profile, opens in a new tab)</span>
+                  </a>
+                ) : (
+                  <span className="li-name">{x.name}</span>
+                )}
+                <Score value={x.best.pain_score} />
+              </span>
+              {x.sharing && <span className="li-share">Shares the pain</span>}
+              <ContactFacts headline={x.headline} company={x.company} emails={x.emails} />
             </div>
-            {person.comments.map((k) => (
+            {x.comments.map((k) => (
               <CommentScore key={k.id} k={k} />
             ))}
-          </>
-        )}
+          </article>
+        ))}
       </section>
     </div>
   );
 }
 
-function AuthorCards({ posts, selectedId, onChoose }: { posts: LiPostRow[]; selectedId: string; onChoose: (id: string) => void }) {
-  if (!posts.length) return <p className="muted li-col-empty">None.</p>;
+function PostCards({ title, posts, selectedId, onChoose, empty }: { title: string; posts: LiPostRow[]; selectedId: string; onChoose: (id: string) => void; empty?: string }) {
   return (
-    <ul className="li-cards">
-      {posts.map((p) => {
-        const url = https(p.author_url);
-        const role = [p.author_relation && ROLE[p.author_relation], p.author_company].filter(Boolean).join(", ");
-        return (
-          <li key={p.id} className="li-card-wrap">
-            <button type="button" className="li-card" aria-pressed={p.id === selectedId} onClick={() => onChoose(p.id)}>
-              <span className="li-card-title">{p.author_name ?? (p.author_type === "company" ? "Company page" : "LinkedIn member")}</span>
-              {role && <span className="li-card-meta">{role}</span>}
-              <span className="li-card-meta li-two-lines">{excerpt(p.body, 100)}</span>
-            </button>
-            {url && (
-              <a href={url} target="_blank" rel="noopener noreferrer" className="link li-card-link">
-                LinkedIn profile <ArrowSquareOut size={12} aria-hidden />
-                <span className="sr-only">(opens in a new tab)</span>
-              </a>
-            )}
-          </li>
-        );
-      })}
-    </ul>
+    <>
+      <h3 className="li-col-title">
+        {title} <span className="num">{posts.length}</span>
+      </h3>
+      {posts.length === 0 && empty && <p className="muted li-col-empty">{empty}</p>}
+      <ul className="li-cards">
+        {posts.map((p) => {
+          const sharing = p.comments.filter((k) => k.resonates).length;
+          return (
+            <li key={p.id}>
+              <button type="button" className="li-card" aria-pressed={p.id === selectedId} onClick={() => onChoose(p.id)}>
+                <span className="li-card-title li-two-lines">{excerpt(p.body, 160)}</span>
+                <span className="li-card-meta">
+                  {p.author_name ?? (p.author_type === "company" ? "Company page" : "LinkedIn member")}
+                  {p.author_relation && `, ${ROLE[p.author_relation]?.toLowerCase() ?? p.author_relation}`}
+                </span>
+                <span className="li-card-meta">
+                  {plural(p.comments.length, "commenter", "commenters")}
+                  {sharing > 0 && `, ${sharing} sharing`}
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </>
   );
 }
 

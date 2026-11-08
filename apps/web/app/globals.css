@@ -479,13 +479,23 @@ select:disabled { opacity: 0.45; cursor: not-allowed; }
 .li-cell-pains > li { display: list-item; list-style: disc; margin-left: var(--space-md); padding-left: 0; border-left: 0; color: var(--color-ink); }
 .li-cell-pains > li::marker { color: var(--opt-red); }
 
-/* Contacts kanban (/linkedin): five columns, each scrolling on its own; sideways on narrow screens. */
+/* Contacts (/linkedin): two columns, each scrolling on its own: posts | the post, its author and
+   its commenters stacked below it (2026-11-08). Stacked into one column on a phone. */
 .li-kanban {
-  display: grid; grid-template-columns: repeat(5, minmax(210px, 1fr)); gap: var(--space-md); min-width: 0; max-width: 100%;
-  position: relative; /* contains the absolutely placed screen-reader text, so off-screen columns cannot widen the page */
-  height: max(480px, calc(100dvh - 96px)); overflow-x: auto; overscroll-behavior-x: contain; padding-bottom: var(--space-xs);
+  display: grid; grid-template-columns: minmax(240px, 1fr) minmax(0, 2.4fr); gap: var(--space-md); min-width: 0; max-width: 100%;
+  position: relative; /* contains the absolutely placed screen-reader text, so it cannot widen the page */
+  height: max(480px, calc(100dvh - 96px)); padding-bottom: var(--space-xs);
 }
-.li-kanban .li-col + .li-col { padding-left: var(--space-md); }
+.li-kanban .li-col + .li-col { padding-left: var(--space-lg); }
+.li-k-detail { max-width: 72ch; }
+.li-commenter { display: flex; flex-direction: column; gap: var(--space-sm); padding: var(--space-sm) 0 var(--space-sm) var(--space-sm); border-left: var(--rule-bar) solid var(--color-rule); }
+.li-commenter.is-sharing { border-left-color: var(--opt-green); }
+.li-commenter .li-comment:last-child { border-bottom: 0; padding-bottom: 0; }
+@media (max-width: 60rem) {
+  .li-kanban { grid-template-columns: minmax(0, 1fr); height: auto; }
+  .li-kanban .li-col { overflow: visible; padding-right: 0; }
+  .li-kanban .li-col + .li-col { border-left: 0; padding-left: 0; border-top: var(--rule-bar) solid var(--color-rule-2); padding-top: var(--space-sm); }
+}
 .li-col-note-plain { font-weight: 400; color: var(--color-muted); }
 .li-two-lines { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
 .li-k-text { font-size: var(--text-sm); }
