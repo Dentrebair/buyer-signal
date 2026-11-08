@@ -34,22 +34,25 @@ export async function setStatus(rawId: string, rawStatus: Prior["status"], rawRe
   return prior;
 }
 
-// Email drafts (§9): only this click writes them. A second click while one is being written does
-// nothing (one queued request per company); the worker's AI call sits inside the monthly cap.
-export async function createDrafts(rawId: unknown): Promise<{ ok: boolean; message: string }> {
+// Email drafts (§9): only a click writes one. `strategy` null = the recommended approach. A second
+// click while one is being written does nothing (one queued request per company); the worker's AI
+// call sits inside the monthly cap.
+const Strategy = z.enum(["direct_active_intent", "peer_benchmark_question", "educational_value_first"]).nullable();
+export async function createDrafts(rawId: unknown, rawStrategy: unknown = null): Promise<{ ok: boolean; message: string }> {
   const id = z.uuid().safeParse(rawId);
-  if (!id.success) return { ok: false, message: "Unknown company." };
+  const strategy = Strategy.safeParse(rawStrategy);
+  if (!id.success || !strategy.success) return { ok: false, message: "Unknown company or approach." };
   const requestId = await asOperator(
     async (c) =>
       (
         await c.query<{ id: string }>(
-          "insert into draft_requests (company_id) values ($1) on conflict (company_id) where status = 'queued' do nothing returning id",
-          [id.data],
+          "insert into draft_requests (company_id, strategy) values ($1, $2) on conflict (company_id) where status = 'queued' do nothing returning id",
+          [id.data, strategy.data],
         )
       ).rows[0]?.id ?? null,
   );
-  if (!requestId) return { ok: true, message: "Already writing these drafts." };
+  if (!requestId) return { ok: true, message: "Already writing a draft for this company." };
   await (await queue()).send(Q.draftLlm, { requestId } satisfies DraftLlm);
   revalidatePath("/dashboard");
-  return { ok: true, message: "Writing three drafts: about 20 seconds." };
+  return { ok: true, message: "Writing the email: about 15 seconds." };
 }

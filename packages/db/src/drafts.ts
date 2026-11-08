@@ -1,10 +1,20 @@
 // Email drafts (migration 0024, §9): what the draft prompt sees, and where the result goes.
 import type pg from "pg";
-import type { DraftCompany, DraftEvidence, OutreachDrafts, StructuredIntelligence } from "@bs/core";
+import type { DraftCompany, DraftEvidence, OutreachDrafts, OutreachStrategy, StructuredIntelligence } from "@bs/core";
 import type { Db } from "./pool.ts";
 
-export async function draftRequest(db: Db, id: string): Promise<{ id: string; companyId: string; status: string } | null> {
-  const r = (await db.query<{ id: string; companyId: string; status: string }>('select id, company_id "companyId", status from draft_requests where id = $1', [id])).rows[0];
+// `strategy` null: the recommended approach. `drafts`: the emails the company already has.
+export async function draftRequest(
+  db: Db,
+  id: string,
+): Promise<{ id: string; companyId: string; status: string; strategy: OutreachStrategy | null; drafts: OutreachDrafts | null } | null> {
+  const r = (
+    await db.query(
+      `select r.id, r.company_id "companyId", r.status, r.strategy, c.outreach_drafts drafts
+         from draft_requests r join companies c on c.id = r.company_id where r.id = $1`,
+      [id],
+    )
+  ).rows[0];
   return r ?? null;
 }
 
@@ -47,9 +57,10 @@ export async function draftInput(db: Db, companyId: string): Promise<DraftCompan
   };
 }
 
-// The drafts replace any earlier ones, and are fresh again until new evidence arrives.
-export async function saveDrafts(c: pg.PoolClient, x: { requestId: string; companyId: string; drafts: OutreachDrafts; model: string; costUsd: number }): Promise<void> {
-  await c.query("update companies set outreach_drafts = $2, draft_generated_at = now(), draft_stale = false where id = $1", [x.companyId, x.drafts]);
+// The company's drafts with the new email merged in (mergeDraft). `draft_stale` is cleared when
+// every email has been written since the last new evidence; a single rewrite leaves it as it was.
+export async function saveDrafts(c: pg.PoolClient, x: { requestId: string; companyId: string; drafts: OutreachDrafts; fresh: boolean; model: string; costUsd: number }): Promise<void> {
+  await c.query("update companies set outreach_drafts = $2, draft_generated_at = now(), draft_stale = draft_stale and not $3 where id = $1", [x.companyId, x.drafts, x.fresh]);
   await c.query("update draft_requests set status = 'done', model = $2, cost_usd = $3, finished_at = now() where id = $1", [x.requestId, x.model, x.costUsd]);
 }
 

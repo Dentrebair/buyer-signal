@@ -893,8 +893,12 @@ OutreachEmail = { strategy: OutreachStrategy, subject: string.max(120), body: st
 OutreachDrafts = { recommended: OutreachStrategy, emails: OutreachEmail[3], warning_banner?: string }
 ```
 
-**Built 2026-11-08.** The dossier's **Email drafts** section has one button, Create email drafts
-(Regenerate once written). The click inserts a `draft_requests` row (migration 0024: the operator
+**Built 2026-11-08; one email per click (operator's choice, same day).** The dossier's **Email
+drafts** section has one button, Create email draft: it writes one email in the recommended
+approach. Under it, one button per approach not yet written (at most two more, three in all);
+each email has Rewrite and Copy, and is marked when written before the latest evidence. The
+request names the approach (`draft_requests.strategy`, migration 0025; null = recommended) and the
+worker merges the email into the company's drafts (`mergeDraft`). The click inserts a `draft_requests` row (migration 0024: the operator
 may only insert a queued request; one queued per company, so a double click costs nothing) and
 enqueues `draft-llm`. The worker reads the company and its evidence, strongest first: a job post
 (title, the work, may be quoted), an owner's or company page's post (may be quoted), an employee's

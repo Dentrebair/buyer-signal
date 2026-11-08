@@ -712,7 +712,8 @@ g.is-active path { opacity: 0.8; }
 .draft { display: flex; flex-direction: column; gap: var(--space-xs); padding: var(--space-sm) var(--space-md); border: var(--rule-hair) solid var(--color-rule); border-radius: var(--radius-card); background: var(--color-sheet); }
 .draft.is-recommended { border-color: var(--color-accent); }
 .draft .lead-head { align-items: center; }
-.draft-copy { margin-left: auto; }
+.draft-tools { display: inline-flex; gap: var(--space-2xs); margin-left: auto; }
+.drafts-more { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); }
 .draft-subject { margin: 0; font-weight: 600; color: var(--color-ink); }
 .draft-body { margin: 0; white-space: pre-wrap; color: var(--color-ink-2); max-width: 70ch; }
 
