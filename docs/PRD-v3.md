@@ -391,6 +391,18 @@ solves LinkedIn search's missing market filter (§4.1d). Researched 2026-11-08 o
   location ids for the three markets, and the fields a group post really carries.
 - **Not yet:** comments, following specific groups, the rotation and the bandit (Facebook topic
   arms come after the first runs show yield).
+- **Probed 2026-11-08 (4 runs, $0.026): keyword search does not work for this.** Facebook's
+  signed-out search does not match keywords: of 13 group posts returned for "freight invoices" and
+  "doing invoices" (sorted by recent or by top, last 3 weeks), **none** contained the words
+  (`matches_query` false on all): room rentals, phone plans, craft sales, football tickets. With
+  `mustContainQuery` every post was filtered out, and the actor stops after one page when nothing
+  is delivered (it funds its residential proxy from delivered posts). The location filter keeps
+  only place-tagged posts (2-5 % per the actor's docs) and returned none for New York. So the
+  market filter does not rescue it.
+- **Next to decide:** follow **specific public groups** instead (`apify/facebook-groups-scraper`,
+  $0.005 a post): groups are relevant by what they are ("Freight Brokers & Dispatchers", "Dubai
+  Small Business Owners"), and the group's own location answers the market. Needs a list of
+  groups first (a groups-search scraper, ≈ $0.003 a group, or picked by the operator).
 
 ### 4.1a Company posts (LinkedIn, Reddit)
 
