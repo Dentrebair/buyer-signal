@@ -22,6 +22,8 @@ export const STANCE: Record<string, string> = {
   commenting: "commenting",
 };
 export const https = (u: string | null) => (u && /^https:\/\//i.test(u) ? u : null);
+// A company page's "headline" is its follower count ("1,071 followers"): not a designation.
+export const headlineOf = (h: string | null) => (h && /\w/.test(h) && !/^\s*[\d.,]+\s*[km]?\s+followers?\s*$/i.test(h) ? h.trim() : null);
 // One paragraph, cut at a word: previews ignore the post's own line breaks.
 export const excerpt = (raw: string, n: number) => {
   const s = raw.replace(/\s+/g, " ").trim();
@@ -42,7 +44,7 @@ export function Author({ p }: { p: LiPostRow }) {
       ) : (
         <span className="li-name">{name}</span>
       )}
-      {p.author_headline && <span className="li-headline">{p.author_headline}</span>}
+      {headlineOf(p.author_headline) && <span className="li-headline">{headlineOf(p.author_headline)}</span>}
     </div>
   );
 }
@@ -134,7 +136,7 @@ export function ContactFacts({ headline, company, emails, website }: { headline:
   const site = website ? https(website) : null;
   return (
     <>
-      {headline && /\w/.test(headline) && <span className="li-headline">{headline}</span>}
+      {headlineOf(headline) && <span className="li-headline">{headlineOf(headline)}</span>}
       <Meta
         className="li-meta"
         items={[

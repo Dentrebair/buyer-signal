@@ -7,7 +7,7 @@
 // green shares the pain, yellow another perspective, red doesn't help.
 import { useRef, useState } from "react";
 import { ArrowSquareOut } from "@phosphor-icons/react/ssr";
-import { ContactFacts, Person, ROLE, Verdict, excerpt, https, plural } from "@/components/LiParts.tsx";
+import { ContactFacts, Person, ROLE, Verdict, excerpt, headlineOf, https, plural } from "@/components/LiParts.tsx";
 import { ageLabel } from "@/lib/labels.ts";
 import type { LiCommentRow, LiPostRow } from "@/lib/linkedin.ts";
 
@@ -63,7 +63,7 @@ function commenters(p: LiPostRow): Commenter[] {
       if (KIND_RANK[kind] < KIND_RANK[had.kind]) had.kind = kind;
       if ((k.pain_score ?? -1) > (had.best ?? -1)) had.best = k.pain_score;
     } else {
-      const headline = k.headline && /\w/.test(k.headline) ? k.headline : null;
+      const headline = headlineOf(k.headline);
       by.set(key, {
         key,
         name: k.name ?? (k.actor_type === "company" ? "Company page" : "LinkedIn member"),
@@ -158,10 +158,12 @@ export function LiContactsBoard({ posts }: { posts: LiPostRow[] }) {
                   <li key={x.key} className="li-k-person">
                     <button type="button" className={`li-card li-card-${x.kind}`} aria-pressed={x.key === person?.key} onClick={() => setPersonKey(x.key)}>
                       <span className="li-card-row">
-                        <span className="li-card-title">{x.name}</span>
+                        <span className="li-who">
+                          <span className="li-card-title">{x.name}</span>
+                          {x.role && <span className="li-role">{x.role}</span>}
+                        </span>
                         <Score value={x.best} />
                       </span>
-                      {x.role && <span className="li-card-meta">{x.role}</span>}
                       <span className={`li-kind li-kind-${x.kind}`}>{KIND_LABEL[x.kind]}</span>
                     </button>
                     {x.profileUrl && (
@@ -176,11 +178,12 @@ export function LiContactsBoard({ posts }: { posts: LiPostRow[] }) {
             </div>
 
             <div className="li-k-subcol" role="group" aria-label={person ? `Comments by ${person.name}` : "Comments"}>
-              <h3 className="li-col-title">{person ? `Comments by ${person.name}` : "Comments"}</h3>
+              <h3 className="li-col-title">Comments</h3>
               {person && (
                 <>
-                  <div className="li-k-who">
-                    {person.headline && <span className="li-headline">{person.headline}</span>}
+                  <div className="li-who li-k-who">
+                    <span className="li-name">{person.name}</span>
+                    {person.headline && <span className="li-role">{person.headline}</span>}
                     <ContactFacts headline={null} company={person.company} emails={person.emails} />
                   </div>
                   {person.comments.map((k) => (
@@ -232,11 +235,12 @@ function AuthorList({ title, posts, selectedId, onChoose }: { title: string; pos
       <ul className="li-k-authors">
         {posts.map((p) => (
           <li key={p.id} className={p.id === selectedId ? "is-selected" : undefined} aria-current={p.id === selectedId ? "true" : undefined}>
-            <span className="li-card-row">
+            <span className="li-who">
               <Person name={p.author_name} url={p.author_url} type={p.author_type} />
-              {p.author_relation && <span className="verdict">{ROLE[p.author_relation] ?? p.author_relation}</span>}
+              {headlineOf(p.author_headline) && <span className="li-role">{headlineOf(p.author_headline)}</span>}
             </span>
-            <ContactFacts headline={p.author_headline} company={p.author_company} emails={p.emails} website={p.author_website} />
+            {p.author_relation && <span className="verdict li-k-chip">{ROLE[p.author_relation] ?? p.author_relation}</span>}
+            <ContactFacts headline={null} company={p.author_company} emails={p.emails} website={p.author_website} />
             {p.id !== selectedId && (
               <button type="button" className="link li-k-show" onClick={() => onChoose(p.id)}>
                 Show their post
