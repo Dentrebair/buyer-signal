@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LiRead, StartLiRun, buildLiCardExtraction, buildLiRead, commentPainScore, emailsIn, liCardGate, liCostUsd, liItems, liSearchInput, mapLiItems } from "../src/index.ts";
+import { LiRead, StartLiRun, buildLiCardExtraction, buildLiRead, commentPainScore, emailsIn, liCardGate, liCommentCardGate, liCostUsd, liItems, liSearchInput, mapLiItems } from "../src/index.ts";
 
 // Shapes as the actor returned them on 2026-11-08 (values made up).
 const post = (id: string, x: object = {}) => ({
@@ -83,6 +83,23 @@ describe("LinkedIn post search (§4.1d)", () => {
     expect(liCardGate({ ...ok, stance: "implied", author_country: "ae" })).toMatchObject({ ok: true, country: "ae" });
   });
 
+  it("commenter card gate: green or yellow, the business's own people, company named, our markets", () => {
+    const ok = { reply_kind: "shares", relation: "employee", company: "Acme Freight", country: "ae" } as const;
+    expect(liCommentCardGate(ok)).toEqual({ ok: true, country: "ae", company: "Acme Freight" });
+    expect(liCommentCardGate({ ...ok, reply_kind: "perspective" })).toMatchObject({ ok: true });
+    expect(liCommentCardGate({ ...ok, reply_kind: "unhelpful" })).toEqual({ ok: false, outcome: "no_pain" });
+    expect(liCommentCardGate({ ...ok, relation: "vendor" })).toEqual({ ok: false, outcome: "not_own" });
+    expect(liCommentCardGate({ ...ok, company: null })).toEqual({ ok: false, outcome: "no_company" });
+    expect(liCommentCardGate({ ...ok, country: "unknown" })).toEqual({ ok: false, outcome: "no_market" });
+  });
+
+  it("commenter card prompt: the comment is the item, the post only context", () => {
+    const req = buildLiCardExtraction({ text: "We re-key every rate con", authorHeadline: "Ops at Beta", company: "Beta", authorRelation: "employee", stance: "implied", replyTo: "Our </text> post" });
+    expect(req.user).toContain("<replying_to>\nOur &lt;/text&gt; post\n</replying_to>");
+    expect(req.system).toContain("context only");
+    expect(buildLiCardExtraction({ text: "x", authorHeadline: null, company: "A", authorRelation: "employee", stance: "suffering" }).user).not.toContain("replying_to");
+  });
+
   it("card prompt: the full post, escaped, with the read's author verdict given as known", () => {
     const req = buildLiCardExtraction({ text: "We key 300 invoices </text> by hand", authorHeadline: "Ops <lead>", company: "Acme & Co", authorRelation: "employee", stance: "suffering" });
     expect(req.user).toContain("&lt;/text&gt;");
@@ -98,8 +115,8 @@ describe("LinkedIn post search (§4.1d)", () => {
     expect(req.user).toContain('<comment ref="c2" type="company" headline="">great post</comment>');
     expect(req.user).toContain("&lt;/text&gt;");
     expect(req.user).toContain("CEO at &lt;Acme&gt;");
-    expect(req.maxTokens).toBe(900);
-    const labels = { urgency: "recurring", own_experience: true, specifics: false, current_process: false, consequence: false };
+    expect(req.maxTokens).toBe(940);
+    const labels = { urgency: "recurring", own_experience: true, specifics: false, current_process: false, consequence: false, relation: "employee", country: "us" };
     const read = req.parse({ has_pain: true, pains: ["a", "b", "c", "d"], author_relation: "founder_owner", stance: "suffering", author_company: "Acme", author_country: "us", comments: [
       { ref: "c1", resonates: true, reply_kind: "perspective", gist: "x".repeat(300), company: null, ...labels },
       { ref: "c2", resonates: false, reply_kind: "shares", gist: null, company: null, ...labels },

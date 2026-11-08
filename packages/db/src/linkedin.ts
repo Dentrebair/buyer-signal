@@ -1,6 +1,6 @@
 // LinkedIn post search (PRD §4.1d): posts, comments and the AI's read of them.
 import type pg from "pg";
-import { type LiCardOutcome, type LiComment, type LiPost, type LiRead, commentPainScore, emailsIn } from "@bs/core";
+import { type LiCardOutcome, type LiComment, type LiPost, type LiRead, commentPainScore, emailsIn, liCommentCardGate } from "@bs/core";
 import type { Db } from "./pool.ts";
 
 // Saves a run's posts and their comments; returns the ids of posts new to this run (a retry adds nothing).
@@ -67,8 +67,9 @@ export async function liPostToRead(db: Db, id: string, maxComments: number): Pro
 }
 
 // `comments`: the li_comments the AI saw, in its order (its refs are c1, c2, …), with their text.
-// `card`: the card gate's verdict ('checking' while the card job runs).
-export async function saveLiRead(c: pg.PoolClient, id: string, read: LiRead, comments: { id: string; body: string }[], card: LiCardOutcome): Promise<void> {
+// `card`: the post's card gate verdict ('checking' while the card job runs). Returns the comments
+// that passed their own card gate (liCommentCardGate), now 'checking'.
+export async function saveLiRead(c: pg.PoolClient, id: string, read: LiRead, comments: { id: string; body: string }[], card: LiCardOutcome): Promise<string[]> {
   await c.query(
     `update li_posts set status = 'read', has_pain = $2, pains = $3, stance = $4, author_relation = $5, author_company = $6, author_country = $7,
                          card_outcome = $8, read_at = now()
@@ -76,18 +77,59 @@ export async function saveLiRead(c: pg.PoolClient, id: string, read: LiRead, com
     [id, read.has_pain, JSON.stringify(read.has_pain ? read.pains : []), read.stance, read.author_relation, read.author_company?.trim() || null,
       read.author_country, card],
   );
+  const toCard: string[] = [];
   for (const k of read.comments) {
     const n = Number(/^c(\d+)$/.exec(k.ref)?.[1]);
     const seen = comments[n - 1];
     if (!seen) continue; // a ref the prompt never had
     const pain = commentPainScore(k, seen.body);
-    await c.query(
+    const gate = liCommentCardGate(k);
+    const r = await c.query(
       `update li_comments set resonates = $2, gist = $3, company = $4, urgency = $6, signals = $7, urgency_pct = $8, depth_pct = $9, pain_score = $10,
-                              reply_kind = $11
+                              reply_kind = $11, relation = $12, country = $13, card_outcome = $14
         where id = $1 and li_post_id = $5`,
-      [seen.id, k.resonates, k.gist, k.company?.trim() || null, id, k.urgency, pain.signals, pain.urgencyPct, pain.depthPct, pain.score, k.reply_kind],
+      [seen.id, k.resonates, k.gist, k.company?.trim() || null, id, k.urgency, pain.signals, pain.urgencyPct, pain.depthPct, pain.score, k.reply_kind,
+        k.relation, k.country, gate.ok ? "checking" : gate.outcome],
     );
+    if (gate.ok && r.rowCount) toCard.push(seen.id);
   }
+  return toCard;
+}
+
+// What a commenter's card job needs: the comment, the gate's inputs, and the post it answers.
+export interface LiCommentForCard {
+  id: string;
+  commentId: string;
+  url: string | null;
+  body: string;
+  headline: string | null;
+  company: string | null;
+  relation: string | null;
+  country: string | null;
+  replyKind: "shares" | "perspective" | "unhelpful" | null;
+  cardOutcome: LiCardOutcome | null;
+  commentedAt: Date | null;
+  postBody: string;
+  postUrl: string;
+  postedAt: Date | null;
+  runId: string;
+  vertical: string | null;
+}
+export async function liCommentForCard(db: Db, id: string): Promise<LiCommentForCard | null> {
+  const r = (
+    await db.query<LiCommentForCard>(
+      `select k.id, k.comment_id "commentId", k.url, k.body, k.headline, k.company, k.relation, k.country, k.reply_kind "replyKind",
+              k.card_outcome "cardOutcome", k.commented_at "commentedAt", p.body "postBody", p.url "postUrl", p.posted_at "postedAt",
+              p.run_id "runId", r.vertical
+         from li_comments k join li_posts p on p.id = k.li_post_id join ingestion_runs r on r.id = p.run_id where k.id = $1`,
+      [id],
+    )
+  ).rows[0];
+  return r ?? null;
+}
+
+export async function setLiCommentCardOutcome(db: Db, id: string, outcome: LiCardOutcome): Promise<void> {
+  await db.query("update li_comments set card_outcome = $2 where id = $1", [id, outcome]);
 }
 
 // What the card job needs: the post, the read's verdict, and its run's vertical.
@@ -133,6 +175,10 @@ export async function markLiError(db: Db, id: string): Promise<void> {
 export async function purgeLinkedin(db: Db, days = 60): Promise<number> {
   await db.query("update li_posts set status = 'ai_error' where status = 'reading' and created_at < now() - interval '1 hour'");
   await db.query("update li_posts set card_outcome = 'ai_error' where card_outcome = 'checking' and created_at < now() - interval '1 hour'");
+  await db.query(
+    `update li_comments k set card_outcome = 'ai_error' from li_posts p
+      where p.id = k.li_post_id and k.card_outcome = 'checking' and p.created_at < now() - interval '1 hour'`,
+  );
   const r = await db.query("delete from li_posts where created_at < now() - make_interval(days => $1)", [days]);
   return r.rowCount ?? 0;
 }

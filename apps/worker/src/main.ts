@@ -2,10 +2,10 @@
 // Usage: npm run worker
 import { PgBoss } from "pg-boss";
 import { z } from "zod";
-import { type QueueName, ApifyRunEvent, CardLiPost, ExtractLlm, FetchDataset, FetchLiRun, Q, ReadLiPost, SniffDomain, StartBoardRun, StartLiRun } from "@bs/core";
+import { type QueueName, ApifyRunEvent, CardLiComment, CardLiPost, ExtractLlm, FetchDataset, FetchLiRun, Q, ReadLiPost, SniffDomain, StartBoardRun, StartLiRun } from "@bs/core";
 import { BudgetExceededError, createPool, gatedLlm } from "@bs/db";
 import { ApifyClient, OpenRouterClient, ProviderError, RdapClient, fetchPage, loadFingerprints, sniffWebsite } from "@bs/integrations";
-import { type Deps, cardLiPost, driftCheck, extractLlm, fetchDataset, fetchLiRun, ingestRotation, readLiPost, startLiRun, onApifyRunEvent, syncSearchArms, pollRuns, reconcileApify, resolveBatch, sniffDomain, sniffSeeds, startBoardRun } from "./jobs.ts";
+import { type Deps, cardLiComment, cardLiPost, driftCheck, extractLlm, fetchDataset, fetchLiRun, ingestRotation, readLiPost, startLiRun, onApifyRunEvent, syncSearchArms, pollRuns, reconcileApify, resolveBatch, sniffDomain, sniffSeeds, startBoardRun } from "./jobs.ts";
 
 const env = z
   .object({
@@ -77,6 +77,7 @@ const queues: QueueDef<any>[] = [
   { name: Q.fetchLiRun, concurrency: 1, expireInSeconds: 300, schema: FetchLiRun, run: fetchLiRun },
   { name: Q.readLiPost, concurrency: 2, expireInSeconds: 180, schema: ReadLiPost, run: readLiPost },
   { name: Q.cardLiPost, concurrency: 2, expireInSeconds: 180, schema: CardLiPost, run: cardLiPost },
+  { name: Q.cardLiComment, concurrency: 2, expireInSeconds: 180, schema: CardLiComment, run: cardLiComment },
   // One batch a day, so the day's best-scoring posts get the search quota (§5.1 step 5c).
   { name: Q.resolveBatch, concurrency: 1, expireInSeconds: 900, schema: z.unknown(), run: (d) => resolveBatch(d) },
   // Free (plain HTTP) and automatic (§4.2): pending seeds every 10 min, 4 sites at a time.

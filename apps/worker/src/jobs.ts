@@ -55,6 +55,8 @@ import {
   type FetchLiRun,
   type ReadLiPost,
   type CardLiPost,
+  type CardLiComment,
+  liCommentCardGate,
   type LiRead,
   LI_ARM_COUNTRY,
   LI_MAX_COMMENTS,
@@ -117,6 +119,8 @@ import {
   liPostToRead,
   liPostForCard,
   setLiCardOutcome,
+  liCommentForCard,
+  setLiCommentCardOutcome,
   markLiError,
   purgeLinkedin,
   saveLiItems,
@@ -435,8 +439,9 @@ export async function readLiPost(d: Deps, job: ReadLiPost): Promise<string> {
   });
   const gate = liCardGate(out.data);
   await withTransaction(d.pool, async (c) => {
-    await saveLiRead(c, post.id, out.data, post.comments, gate.ok ? "checking" : gate.outcome);
+    const commenters = await saveLiRead(c, post.id, out.data, post.comments, gate.ok ? "checking" : gate.outcome);
     if (gate.ok) await d.send(Q.cardLiPost, { liPostId: post.id } satisfies CardLiPost, undefined, c);
+    for (const liCommentId of commenters) await d.send(Q.cardLiComment, { liCommentId } satisfies CardLiComment, undefined, c);
   });
   const shared = out.data.comments.filter((k) => k.resonates).length;
   return out.data.has_pain ? `pain: ${out.data.pains.length}, ${shared} comments share it, card: ${gate.ok ? "checking" : gate.outcome}` : "no pain";
@@ -498,6 +503,65 @@ export async function cardLiPost(d: Deps, job: CardLiPost): Promise<string> {
   };
   const result = await toCard(d, asPost, rest, out.model);
   await setLiCardOutcome(d.pool, p.id, result === "dropped_no_fit_count" ? "no_fit" : result === "dropped_size_count" ? "too_large" : "card");
+  return result;
+}
+
+// A commenter's own card (operator's choice, 2026-11-08: green or yellow comments). The comment
+// is the evidence and the post is context; shares counts as suffering, another perspective as
+// implied (lower intent). Same path to a card as a post.
+const REPLY_STANCE = { shares: "suffering", perspective: "implied" } as const;
+
+export async function cardLiComment(d: Deps, job: CardLiComment): Promise<string> {
+  const k = await liCommentForCard(d.pool, job.liCommentId);
+  if (!k) return "comment gone";
+  if (k.cardOutcome !== "checking") return "already decided";
+  const gate = liCommentCardGate({
+    reply_kind: k.replyKind ?? "unhelpful",
+    relation: k.relation as LiRead["author_relation"],
+    company: k.company,
+    country: (k.country ?? "unknown") as LiRead["author_country"],
+  });
+  if (!gate.ok) {
+    await setLiCommentCardOutcome(d.pool, k.id, gate.outcome);
+    return gate.outcome;
+  }
+  const naturalId = `comment:linkedin:${k.commentId}`;
+  if ((await d.pool.query("select 1 from challenges where natural_id = $1", [naturalId])).rowCount) {
+    await setLiCommentCardOutcome(d.pool, k.id, "duplicate");
+    return "duplicate";
+  }
+  const stance = REPLY_STANCE[k.replyKind === "shares" ? "shares" : "perspective"]; // the gate let only these two through
+  const req = buildLiCardExtraction({ text: k.body, authorHeadline: k.headline, company: gate.company, authorRelation: k.relation!, stance, replyTo: k.postBody });
+  const out = await d.llm.json("extraction", req).catch(async (e: unknown) => {
+    if ((e as { retryable?: unknown }).retryable === false) await setLiCommentCardOutcome(d.pool, k.id, "ai_error");
+    throw e;
+  });
+  const { vertical, ...extracted } = out.data;
+  const si: StructuredIntelligence = { ...extracted, author_relation: k.relation as AuthorRelation, stance };
+  const rest = si.stance === "solved" && si.solved_how === "with_software" ? { ...si, product_layer: "company_os" as const } : si;
+  const text = k.body.slice(0, 2000);
+  const gated = gateSnippet(text, (vertical ?? k.vertical) as VerticalSlug | null);
+  const asPost: ExtractLlm = {
+    runId: k.runId,
+    vertical: (vertical ?? k.vertical) as VerticalSlug | null,
+    founderDependency: gated.pass && gated.founderDependency,
+    source: "linkedin_post",
+    author: k.relation as AuthorRelation,
+    post: {
+      naturalId,
+      url: k.url ?? k.postUrl,
+      title: "LinkedIn comment",
+      company: gate.company,
+      description: text,
+      postedAt: (k.commentedAt ?? k.postedAt)?.toISOString() ?? null,
+      city: null,
+      country: gate.country,
+      boardWebsite: null,
+      boardEmployeeBand: null,
+    },
+  };
+  const result = await toCard(d, asPost, rest, out.model);
+  await setLiCommentCardOutcome(d.pool, k.id, result === "dropped_no_fit_count" ? "no_fit" : result === "dropped_size_count" ? "too_large" : "card");
   return result;
 }
 

@@ -62,8 +62,9 @@ export function PostMeta({ p }: { p: LiPostRow }) {
   );
 }
 
-// Why a pain post did not become an inbox card (li_posts.card_outcome, §4.1d).
-const NOT_A_CARD: Record<string, string> = {
+// Why a pain post or a comment did not become an inbox card (card_outcome, §4.1d).
+export const NOT_A_CARD: Record<string, string> = {
+  no_pain: "nothing about their own work",
   not_own: "not the business's own pain",
   no_company: "no company named",
   no_market: "outside our markets",

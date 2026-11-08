@@ -200,12 +200,15 @@ export const PainUrgency = z.enum(["none", "nuisance", "recurring", "blocking"])
 export const ReplyKind = z.enum(["shares", "perspective", "unhelpful"]);
 export type ReplyKind = z.infer<typeof ReplyKind>;
 export type PainUrgency = z.infer<typeof PainUrgency>;
+export const LiCountry = z.enum(["in", "ae", "us", "other", "unknown"]);
 export const LiCommentRead = z.object({
   ref: z.string(), // "c1", "c2": the comment's number in the prompt
   resonates: z.boolean(),
   reply_kind: ReplyKind,
   gist: z.string().nullable(),
   company: z.string().nullable(),
+  relation: AuthorRelationOut, // the commenter to their company: a card only for its own people
+  country: LiCountry, // where the commenter's business is: the card's market
   // What the scoring rules need (commentPainScore): the AI labels, the code scores.
   urgency: PainUrgency,
   own_experience: z.boolean(),
@@ -214,7 +217,6 @@ export const LiCommentRead = z.object({
   consequence: z.boolean(),
 });
 export type LiCommentRead = z.infer<typeof LiCommentRead>;
-export const LiCountry = z.enum(["in", "ae", "us", "other", "unknown"]);
 export const LiRead = z.object({
   has_pain: z.boolean(),
   pains: z.array(z.string()),
@@ -233,6 +235,18 @@ export type LiCardOutcome = "checking" | "card" | "no_pain" | "not_own" | "no_co
 const OWN_AUTHORS = new Set(["founder_owner", "employee", "company_page"]);
 const KEPT_STANCES = new Set(["suffering", "implied", "solved"]);
 const MARKETS = new Set(["in", "ae", "us"]);
+
+// A commenter's own card (operator's choice, 2026-11-08): green or yellow comments, by the
+// business's own people, company named, in one of our markets.
+export function liCommentCardGate(k: Pick<LiCommentRead, "reply_kind" | "relation" | "company" | "country">):
+  { ok: true; country: "in" | "ae" | "us"; company: string } | { ok: false; outcome: LiCardOutcome } {
+  if (k.reply_kind === "unhelpful") return { ok: false, outcome: "no_pain" };
+  if (!OWN_AUTHORS.has(k.relation)) return { ok: false, outcome: "not_own" };
+  const company = k.company?.trim();
+  if (!company) return { ok: false, outcome: "no_company" };
+  if (!MARKETS.has(k.country)) return { ok: false, outcome: "no_market" };
+  return { ok: true, country: k.country as "in" | "ae" | "us", company };
+}
 
 export function liCardGate(r: Pick<LiRead, "has_pain" | "author_relation" | "stance" | "author_company" | "author_country">):
   { ok: true; country: "in" | "ae" | "us"; company: string } | { ok: false; outcome: LiCardOutcome } {
@@ -260,6 +274,8 @@ Return JSON only, matching the schema:
   - reply_kind: shares when resonates is true. perspective when the comment adds something real about the problem without sharing it as their own pain: a different view, a cause, a workaround, a question that digs in, advice from experience. unhelpful for praise, thanks, tags, generic agreement, sales pitches and anything off-topic.
   - gist: what is critical in the comment, under 20 words, in your words: the pain or experience they describe, else the point they make. null for an empty or one-word comment.
   - company: the commenter's company from their headline, null if none is named.
+  - relation: the commenter to that company, read from their headline and the comment, with the same values as author_relation (a consultant or software seller pitching is vendor).
+  - country: where the commenter's business operates, with the same values and rules as author_country.
   - urgency: how bad the pain the commenter describes is for them: none (no pain of their own), nuisance (occasional annoyance), recurring (regularly costs them time or money), blocking (stops work, loses money or stops them growing).
   - own_experience: true when they speak of their own or their team's experience, not people in general.
   - specifics: true when they give numbers, hours, money, volumes or name the tools involved.
@@ -298,6 +314,6 @@ export function buildLiRead(post: { text: string; authorHeadline: string | null;
         })),
       };
     },
-    maxTokens: 600 + comments.length * 150,
+    maxTokens: 600 + comments.length * 170,
   };
 }

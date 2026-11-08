@@ -87,20 +87,26 @@ This item is the full text of a public LinkedIn post, not a job post. Its author
 - blast_radius and automation_fit: judge from the post; Sporadic and Nuisance when it does not say.
 - Never copy a person's name into verified_symptom or any other field.`;
 
+// A commenter's card (2026-11-08): the comment is the item, the post it answers is context only.
+const LI_COMMENT_RULES = `
+The item is a comment on a public LinkedIn post. The work to describe is at the commenter's own company, as the comment shows it; the post in <replying_to> is context only and describes someone else's business. A comment that gives another perspective rather than its own pain is implied: describe the manual work it reveals at the commenter's company.`;
+
 export function buildLiCardExtraction(post: {
   text: string;
   authorHeadline: string | null;
   company: string;
   authorRelation: string;
   stance: string;
+  replyTo?: string; // a commenter's card: the post the comment answers
 }): LlmRequest<SeedExtraction> {
   return {
-    system: SYSTEM + VERTICAL_RULE + LI_CARD_RULES,
+    system: SYSTEM + VERTICAL_RULE + LI_CARD_RULES + (post.replyTo ? LI_COMMENT_RULES : ""),
     user: [
       "<post>",
       `<text>\n${esc(truncateWords(post.text))}\n</text>`,
       `<author_headline>${esc(post.authorHeadline ?? "not stated")}</author_headline>`,
       "</post>",
+      ...(post.replyTo ? [`<replying_to>\n${esc(truncateWords(post.replyTo, 300))}\n</replying_to>`] : []),
       `<known><company>${esc(post.company)}</company><author_relation>${post.authorRelation}</author_relation><stance>${post.stance}</stance></known>`,
     ].join("\n"),
     schemaName: "linkedin_card",

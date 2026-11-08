@@ -7,7 +7,7 @@
 // green shares the pain, yellow another perspective, red doesn't help.
 import { useRef, useState } from "react";
 import { ArrowSquareOut } from "@phosphor-icons/react/ssr";
-import { ContactFacts, Person, ROLE, Verdict, excerpt, headlineOf, https, plural } from "@/components/LiParts.tsx";
+import { ContactFacts, NOT_A_CARD, Person, ROLE, Verdict, excerpt, headlineOf, https, plural } from "@/components/LiParts.tsx";
 import { ageLabel } from "@/lib/labels.ts";
 import type { LiCommentRow, LiPostRow } from "@/lib/linkedin.ts";
 
@@ -268,9 +268,12 @@ function Reply({ k }: { k: LiCommentRow }) {
   const on = Object.keys(SIGNAL_LABEL).filter((s) => k.signals.includes(s));
   return (
     <article className={`li-reply li-reply-${kind}`}>
-      <span className={`li-kind li-kind-${kind}`} title={estimated ? "Read before this label existed: estimated from the comment's other labels" : undefined}>
-        {KIND_LABEL[kind]}
-        {estimated && " (estimated)"}
+      <span className="li-k-tags">
+        <span className={`li-kind li-kind-${kind}`} title={estimated ? "Read before this label existed: estimated from the comment's other labels" : undefined}>
+          {KIND_LABEL[kind]}
+          {estimated && " (estimated)"}
+        </span>
+        <CommentCard k={k} />
       </span>
       {k.gist && (
         <p className="li-gist">
@@ -301,3 +304,17 @@ function Reply({ k }: { k: LiCommentRow }) {
     </article>
   );
 }
+
+// The commenter's own card (green or yellow comments, 2026-11-08), or why it is not one.
+function CommentCard({ k }: { k: LiCommentRow }) {
+  if (k.card_outcome === "checking") return <span className="verdict">Checking for a card</span>;
+  if (k.card_company_id && (k.card_outcome === "card" || k.card_outcome === "duplicate"))
+    return (
+      <a href={`/dashboard?id=${k.card_company_id}`} className="verdict verdict-green link">
+        In the inbox
+      </a>
+    );
+  const why = k.card_outcome ? NOT_A_CARD[k.card_outcome] : null;
+  return why ? <span className="verdict">Not a card: {why}</span> : null;
+}
+

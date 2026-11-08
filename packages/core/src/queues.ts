@@ -18,6 +18,7 @@ export const Q = {
   fetchLiRun: "fetch-li-run",
   readLiPost: "read-li-post",
   cardLiPost: "card-li-post",
+  cardLiComment: "card-li-comment",
   pollRuns: "poll-runs",
   reconcileApify: "reconcile-apify",
   driftCheck: "drift-check",
@@ -106,3 +107,5 @@ export const ReadLiPost = z.object({ liPostId: z.uuid() });
 export type ReadLiPost = z.infer<typeof ReadLiPost>;
 export const CardLiPost = ReadLiPost;
 export type CardLiPost = ReadLiPost;
+export const CardLiComment = z.object({ liCommentId: z.uuid() });
+export type CardLiComment = z.infer<typeof CardLiComment>;

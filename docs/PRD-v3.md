@@ -349,7 +349,15 @@ headline. Kept **60 days**, then purged (poll-runs).
   bandit learns from LinkedIn search; `llm_persisted_count` counts cards, not pain posts
   (corrected for earlier runs, migration 0017). The Google digest's 900 per-market topic arms
   retired with their history (migration 0016); its Run now, queues and prompt are removed, and its
-  stored results age out (21 days). Commenters do not become cards yet.
+  stored results age out (21 days).
+- **Commenter cards (operator's choice, 2026-11-08: green and yellow).** The read also returns, per
+  comment, `relation` (the commenter to their company, author_relation's values) and `country`.
+  `liCommentCardGate` keeps a comment that shares the pain or gives another perspective, by the
+  business's own people, company named, in our markets; `li_comments.card_outcome` records the
+  verdict (migration 0021). A kept comment goes to `card-li-comment`: one AI call fills the card
+  from the comment with the post as context only; shares counts as suffering, another perspective
+  as implied (lower buying intent). Natural id `comment:linkedin:<id>`; the Contacts tab shows
+  "In the inbox" or why not on each comment.
 
 ### 4.1a Company posts (LinkedIn, Reddit)
 

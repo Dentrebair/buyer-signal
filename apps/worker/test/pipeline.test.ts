@@ -9,6 +9,7 @@ import type { ApifyRun, SniffResult } from "@bs/integrations";
 import {
   type Deps,
   type Send,
+  cardLiComment,
   cardLiPost,
   driftCheck,
   extractLlm,
@@ -147,7 +148,9 @@ async function cleanup(pool: pg.Pool) {
   await pool.query("delete from domain_cache where domain like 'sniff-test%.example'");
   await pool.query("delete from ingestion_runs where job_key = 'test-sniff-run'");
   await pool.query("delete from rotation_days where day = $1", [ROTATION_DAY.toISOString().slice(0, 10)]);
-  await pool.query("delete from companies where name_key like 'us:li test freight%'");
+  await pool.query("delete from companies where name_key like 'us:li test freight%' or name_key like 'us:li test beta%'");
+  await pool.query("delete from resolve_queue where natural_id like 'comment:linkedin:76000000000000000%'");
+  await pool.query("delete from domain_cache where key like 'li test beta%'");
   await pool.query("delete from resolve_queue where natural_id like 'post:linkedin:%' and payload::text like '%Li Test Freight%'");
   await pool.query("delete from domain_cache where key like 'li test freight%'");
   await pool.query("delete from eval_cases where headline like '%Li Test Freight%'");
@@ -268,9 +271,9 @@ describe.skipIf(!process.env.DATABASE_URL)("worker pipeline (database)", { timeo
         ? {
             has_pain: true, pains: ["Freight invoices checked by hand"], author_relation: "employee", stance: "suffering", author_company: "Li Test Freight", author_country: "us",
             comments: [
-              { ref: "c1", resonates: false, reply_kind: "unhelpful", gist: "Praise", company: "Li Test Beta", ...noPain },
-              { ref: "c2", resonates: true, reply_kind: "shares", gist: "Spends a week a month checking invoices", company: "Li Test Beta", ...weekly },
-              { ref: "c9", resonates: true, reply_kind: "shares", gist: "not in the prompt", company: null, ...weekly },
+              { ref: "c1", resonates: false, reply_kind: "unhelpful", gist: "Praise", company: "Li Test Beta", relation: "employee", country: "us", ...noPain },
+              { ref: "c2", resonates: true, reply_kind: "shares", gist: "Spends a week a month checking invoices", company: "Li Test Beta", relation: "employee", country: "us", ...weekly },
+              { ref: "c9", resonates: true, reply_kind: "shares", gist: "not in the prompt", company: null, relation: "employee", country: "us", ...weekly },
             ],
           }
         : { has_pain: false, pains: ["ignored when no pain"], author_relation: "employee", stance: "commenting", author_company: null, author_country: "unknown", comments: [] };
@@ -321,10 +324,29 @@ describe.skipIf(!process.env.DATABASE_URL)("worker pipeline (database)", { timeo
       { comment_id: "7600000000000000002", is_author: false, resonates: false, reply_kind: "unhelpful", gist: "Praise", company: "Li Test Beta", pain_score: 0, signals: [] },
       { comment_id: "7600000000000000003", is_author: true, resonates: null, reply_kind: null, gist: null, company: null, pain_score: null, signals: [] },
     ]);
+    // The commenter who shares the pain, at their own company in our markets, gets a card of
+    // their own; the praise does not.
+    const commentCards = sent.filter((x) => x.queue === Q.cardLiComment);
+    expect(commentCards).toHaveLength(1);
+    const k = (await pool.query("select comment_id, relation, country, card_outcome from li_comments where id = $1", [commentCards[0]!.data.liCommentId])).rows[0];
+    expect(k).toEqual({ comment_id: "7600000000000000001", relation: "employee", country: "us", card_outcome: "checking" });
+    expect((await pool.query("select card_outcome from li_comments where comment_id = '7600000000000000002'")).rows[0].card_outcome).toBe("no_pain");
+    expect(await cardLiComment(deps, commentCards[0]!.data)).toMatch(/^persisted/);
+    expect(await cardLiComment(deps, commentCards[0]!.data)).toBe("already decided");
+    const kc = (
+      await pool.query(
+        `select ch.source_type, ch.author_relation, ch.evidence_snippet, ch.structured_intelligence ->> 'stance' stance, c.company_name, c.country
+           from challenges ch join companies c on c.id = ch.company_id where ch.natural_id = 'comment:linkedin:7600000000000000001'`,
+      )
+    ).rows[0];
+    expect(kc).toEqual({ source_type: "linkedin_post", author_relation: "employee", evidence_snippet: "Same here, a week a month on this.", stance: "suffering", company_name: "Li Test Beta", country: "us" });
+    expect((await pool.query("select card_outcome from li_comments where comment_id = '7600000000000000001'")).rows[0].card_outcome).toBe("card");
+    await pool.query("delete from resolve_queue where natural_id = 'comment:linkedin:7600000000000000001'");
+
     // Only the own-business pain post in our markets goes on to a card.
     const cards = sent.filter((x) => x.queue === Q.cardLiPost);
     expect(cards).toHaveLength(1);
-    expect((await pool.query("select llm_persisted_count p from ingestion_runs where id = $1", [runRow.id])).rows[0].p).toBe(0); // a pain post is not a card
+    expect((await pool.query("select llm_persisted_count p from ingestion_runs where id = $1", [runRow.id])).rows[0].p).toBe(1); // the commenter's card; a pain post is not a card until carded
     expect(await cardLiPost(deps, cards[0]!.data)).toMatch(/^persisted/);
     expect(await cardLiPost(deps, cards[0]!.data)).toBe("already decided");
     const ch = (
@@ -336,7 +358,7 @@ describe.skipIf(!process.env.DATABASE_URL)("worker pipeline (database)", { timeo
     ).rows[0];
     expect(ch).toEqual({ source_type: "linkedin_post", author_relation: "employee", run_id: runRow.id, evidence_snippet: "We still check every freight invoice by hand.", company_name: "Li Test Freight", country: "us", vertical: "logistics" });
     expect((await pool.query("select card_outcome from li_posts where post_id = $1", [P1])).rows[0].card_outcome).toBe("card");
-    expect((await pool.query("select llm_persisted_count p from ingestion_runs where id = $1", [runRow.id])).rows[0].p).toBe(1);
+    expect((await pool.query("select llm_persisted_count p from ingestion_runs where id = $1", [runRow.id])).rows[0].p).toBe(2); // the commenter's and the author's
     // The same post found again (another topic or run) costs no second AI call and adds no card.
     await pool.query("update li_posts set card_outcome = 'checking' where post_id = $1", [P1]);
     expect(await cardLiPost(deps, cards[0]!.data)).toBe("duplicate");
