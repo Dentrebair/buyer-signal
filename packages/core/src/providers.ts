@@ -35,6 +35,8 @@ export interface LlmRequest<T> {
   // Hidden reasoning budget, added on top of maxTokens so it can never cut the answer short. Off
   // when absent; some models refuse to run without it (Claude Sonnet 5.5, 2026-11-08).
   reasoningTokens?: number;
+  // When the task's model is OpenRouter's Auto Router: the only models it may pick (exact ids).
+  routerModels?: readonly string[];
 }
 
 export interface LlmClient {

@@ -14,6 +14,12 @@ export const DraftOut = z.object({ emails: z.array(OutreachEmail), warning_banne
 export const OutreachDrafts = DraftOut.extend({ recommended: OutreachStrategy, why: z.string() });
 export type OutreachDrafts = z.infer<typeof OutreachDrafts>;
 
+// The Auto Router picks among these strong writers only (operator's choice, 2026-11-08). Exact ids:
+// a wildcard such as openai/gpt-6* would let in the small gpt-6-luna, which it picked unrestricted
+// ($0.0003, thin emails). Left out: gpt-6-astra ($50 per million output tokens). Most expensive here:
+// Opus 5.5 at $4 / $20, so a draft costs at most ≈ $0.06.
+export const DRAFT_MODELS = ["anthropic/claude-sonnet-5.5", "anthropic/claude-opus-5.5", "google/gemini-3.1-pro-preview", "openai/gpt-6.1-sol"] as const;
+
 export const STRATEGY_LABEL: Record<OutreachStrategy, string> = {
   direct_active_intent: "Direct: they are acting on it now",
   peer_benchmark_question: "Peer question: how others in their trade handle it",
@@ -132,5 +138,6 @@ export function buildDrafts(c: DraftCompany): LlmRequest<z.infer<typeof DraftOut
     // Claude Sonnet 5.5 refuses to run with reasoning off (2026-11-08); 1,024 is the smallest budget
     // Anthropic models accept, ≈ $0.01 more a draft.
     reasoningTokens: 1024,
+    routerModels: DRAFT_MODELS,
   };
 }

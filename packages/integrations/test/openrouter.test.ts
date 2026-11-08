@@ -67,7 +67,16 @@ describe("OpenRouterClient", () => {
     expect(JSON.parse(thinking.calls[0]!.body as string)).toMatchObject({ reasoning: { max_tokens: 1024 }, max_tokens: 2624 });
   });
 
-  it("a router's price (-1, it depends on the model picked) is budgeted at the dearest model's", async () => {
+  it("the Auto Router gets its allowed models as the auto-router plugin; a fixed model gets none", async () => {
+    const routed = fakeFetch([completion(reply)]);
+    await new OpenRouterClient({ env: { ...env, MODEL_EXTRACTION: "openrouter/auto" }, fetch: routed.f }).json("extraction", { ...req, routerModels: ["anthropic/claude-sonnet-5.5"] });
+    expect(JSON.parse(routed.calls[0]!.body as string).plugins).toEqual([{ id: "auto-router", allowed_models: ["anthropic/claude-sonnet-5.5"] }]);
+    const fixed = fakeFetch([completion(reply)]);
+    await new OpenRouterClient({ env, fetch: fixed.f }).json("extraction", { ...req, routerModels: ["anthropic/claude-sonnet-5.5"] });
+    expect(JSON.parse(fixed.calls[0]!.body as string).plugins).toBeUndefined();
+  });
+
+    it("a router's price (-1, it depends on the model picked) is budgeted at the dearest model's", async () => {
     const models = new Response(JSON.stringify({ data: [{ id: "openrouter/auto", pricing: { prompt: "-1", completion: "-1" } }] }));
     const { f } = fakeFetch([models]);
     const worst = await new OpenRouterClient({ env: { OPENROUTER_API_KEY: "k" }, fetch: f }).worstCaseUsd("drafts", { ...req, maxTokens: 1600, reasoningTokens: 1024 });

@@ -903,8 +903,11 @@ One call to `MODEL_DRAFTS` (default `openrouter/auto`, OpenRouter's Auto Router,
 choice 2026-11-08: it picks the model per request and the chosen model is recorded with the
 draft; inside the monthly AI cap, budgeted at Claude Opus 5's price since the router's is listed
 as -1; drafts carry a 1,024-token reasoning budget on top of the 1,600-token answer, which some
-models require) returns the three emails. First real drafts 2026-11-08: Sonnet 5.5 $0.016;
-the Auto Router picked `openai/gpt-6-luna`, $0.0003, with shorter emails; `recommendStrategy` marks one from the evidence (direct:
+models require) returns the three emails. The router may pick only strong writers (`DRAFT_MODELS`:
+Claude Sonnet 5.5, Claude Opus 5.5, Gemini 3.1 Pro, GPT-6.1 Sol; exact ids, at most ≈ $0.06 a
+draft), sent as the `auto-router` plugin's `allowed_models`. First real drafts 2026-11-08: Sonnet 5.5
+$0.016; the unrestricted router picked `openai/gpt-6-luna`, $0.0003, thin emails; restricted, it
+picked `openai/gpt-6.1-sol`, $0.006, full emails; `recommendStrategy` marks one from the evidence (direct:
 a job post or the owner's words at ≥ 80 confidence; value first: website evidence; peer question
 otherwise) with its reason. Saved to `companies.outreach_drafts`, `draft_stale` cleared; new
 evidence sets it again and the dossier asks to regenerate. Each email has Copy; nothing is sent.

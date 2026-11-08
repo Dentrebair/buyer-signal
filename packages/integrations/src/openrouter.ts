@@ -17,6 +17,17 @@ const DEFAULT_MODEL: Partial<Record<LlmTask, string>> = { drafts: "openrouter/au
 // case then assumes the dearest model it could pick: Claude Opus 5, $5 / $25 per million tokens
 // (2026-11-08). What is spent is the cost OpenRouter reports for the call.
 const ROUTER_CEILING: Pricing = { prompt: 5e-6, completion: 25e-6 };
+const AUTO_ROUTER = "openrouter/auto";
+
+// Web search, and the Auto Router's allowed models (verified 2026-11-08 in OpenRouter's routing
+// docs: the auto-router plugin's allowed_models is a hard limit; under any other id it is
+// silently ignored, so the routed model is checked in the tests and recorded with each result).
+function plugins(model: string, input: LlmRequest<unknown>): { plugins?: object[] } {
+  const out: object[] = [];
+  if (input.webSearch) out.push({ id: "web", engine: "parallel", mode: "fast", max_results: input.webSearch.maxResults });
+  if (model === AUTO_ROUTER && input.routerModels?.length) out.push({ id: "auto-router", allowed_models: [...input.routerModels] });
+  return out.length ? { plugins: out } : {};
+}
 
 export class ProviderError extends Error {
   constructor(
@@ -113,7 +124,7 @@ export class OpenRouterClient implements LlmClient {
       // needs it (drafts) gets its own budget on top of its output (LlmRequest.reasoningTokens).
       reasoning: input.reasoningTokens ? { max_tokens: input.reasoningTokens } : { enabled: false },
       usage: { include: true },
-      ...(input.webSearch ? { plugins: [{ id: "web", engine: "parallel", mode: "fast", max_results: input.webSearch.maxResults }] } : {}),
+      ...plugins(model, input),
     });
     const json = await this.request("/chat/completions", { method: "POST", body });
     const message = json?.choices?.[0]?.message;
