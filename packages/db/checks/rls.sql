@@ -55,6 +55,21 @@ select pg_temp.try('authenticated', 'operator write eval_runs', 'blocked', 'dele
 select pg_temp.try('anon', 'anon read eval_cases', 'blocked', 'select count(*) from eval_cases');
 select pg_temp.try('authenticated', 'operator label eval_cases', 'allowed', 'insert into eval_cases (text, author_type, label) values (''rls test'', ''person'', ''none'')');
 select pg_temp.try('authenticated', 'operator remove eval_cases', 'allowed', 'delete from eval_cases where text = ''rls test''');
+-- Leak check (0022): the operator reads samples and proposals, and may only decide a proposal.
+insert into trie_proposals (phrase, category) values ('rls test phrase', 'AUTOMATABLE_TASK');
+select pg_temp.try('authenticated', 'operator read drop_samples', 'allowed', 'select count(*) from drop_samples');
+select pg_temp.try('anon', 'anon read drop_samples', 'blocked', 'select count(*) from drop_samples');
+select pg_temp.try('authenticated', 'operator write drop_samples', 'blocked', 'insert into drop_samples (natural_id, title, text) values (''rls'', ''x'', ''y'')');
+select pg_temp.try('anon', 'anon read trie_proposals', 'blocked', 'select count(*) from trie_proposals');
+select pg_temp.try('authenticated', 'operator add a proposal', 'blocked', 'insert into trie_proposals (phrase, category) values (''rls x'', ''AUTOMATABLE_TASK'')');
+select pg_temp.try('authenticated', 'operator edit a phrase', 'blocked', 'update trie_proposals set phrase = ''edited'' where phrase = ''rls test phrase''');
+select pg_temp.try('authenticated', 'operator approve a proposal', 'allowed', 'update trie_proposals set status = ''approved'' where phrase = ''rls test phrase''');
+select pg_temp.try('authenticated', 'operator re-decide a decided one', 'blocked', 'do $$ begin update trie_proposals set status = ''rejected'' where phrase = ''rls test phrase''; if not found then raise exception ''no row''; end $$');
+delete from trie_proposals where phrase = 'rls test phrase';
+-- Alerts (0023): read only.
+select pg_temp.try('authenticated', 'operator read alerts', 'allowed', 'select count(*) from alerts');
+select pg_temp.try('anon', 'anon read alerts', 'blocked', 'select count(*) from alerts');
+select pg_temp.try('authenticated', 'operator write alerts', 'blocked', 'insert into alerts (day, kind, message) values (''2000-01-01'', ''drift'', ''x'')');
 -- Status trigger (migration 0002): the inbox's Reject / Undo path, run as the operator.
 update companies set priority_score = 77, status = 'new', score_breakdown = '{"families":["job_post"]}' where domain = 'rls-test.example';
 select pg_temp.try('authenticated', 'operator lock row for action', 'allowed', 'select 1 from companies where domain = ''rls-test.example'' for update');

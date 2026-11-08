@@ -8,8 +8,9 @@ import { Meta } from "@/components/Meta.tsx";
 import { RunSource } from "@/components/RunNow.tsx";
 import { ThemeToggle } from "@/components/ThemeToggle.tsx";
 import { type Health, healthValue, loadHealth } from "@/lib/health.ts";
-import { ageLabel } from "@/lib/labels.ts";
-import { RANGES, loadObserve, parseRange } from "@/lib/observe.ts";
+import { ageLabel, verticalLabel } from "@/lib/labels.ts";
+import { type Budget, type Leak, RANGES, ROTATION_DAY_USD, loadObserve, parseRange } from "@/lib/observe.ts";
+import { ProposalActions } from "@/components/ProposalActions.tsx";
 
 export const dynamic = "force-dynamic";
 
@@ -66,6 +67,36 @@ export default async function HealthPage({ searchParams }: { searchParams: Promi
           </span>
           <span className="li-cell-sub">against the {range} days before</span>
         </nav>
+
+        <section className="card source" aria-labelledby="h-alerts" id="alerts">
+          <div className="source-head">
+            <h2 id="h-alerts">Alerts</h2>
+            <Meta className="source-meta" items={["Checked daily at 06:00 UTC", "Emailed when RESEND_API_KEY and ALERT_EMAIL_TO are set"]} />
+          </div>
+          {h.alerts.length === 0 ? (
+            <p className="muted">Nothing in the last 3 days: budgets under 80 %, no failed runs or jobs, and cards on the days searches ran.</p>
+          ) : (
+            <ul className="social-list">
+              {h.alerts.map((a) => (
+                <li key={`${a.day}-${a.kind}`} className="social-item">
+                  <span className="li-cell-sub">
+                    {new Date(`${a.day}T00:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" })}, {a.emailed ? "emailed" : "not emailed"}
+                  </span>
+                  <p className="post-pain">{a.message}</p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section className="card source" aria-labelledby="h-budget">
+          <h2 id="h-budget">Budget</h2>
+          <div className="kpis">
+            {o.budgets.map((b) => (
+              <BudgetTile key={b.label} b={b} />
+            ))}
+          </div>
+        </section>
 
         <section className="kpis" aria-label="Headline numbers">
           <StatTile label="New cards" value={now.cards.toLocaleString("en-US")} compare={cmp(now.cards, before.cards, String(before.cards), true)} spark={o.days.map((d) => d.cards)} />
@@ -159,10 +190,92 @@ export default async function HealthPage({ searchParams }: { searchParams: Promi
           </div>
         </section>
 
+        <LeakSection l={o.leak} />
         <Drift h={h} />
         <Evals h={h} />
       </main>
     </div>
+  );
+}
+
+// Spend against the cap the gates enforce, with a meter, and where the period will end up.
+function BudgetTile({ b }: { b: Budget }) {
+  const share = b.cap > 0 ? Math.min(b.spent / b.cap, 1) : 0;
+  const over = (v: number) => (v > b.cap ? " (over the cap: later runs wait for the next period)" : "");
+  const ends = new Date(`${b.ends}T00:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+  return (
+    <div className="kpi">
+      <span className="kpi-label">{b.label}</span>
+      <span className="kpi-value">
+        {usd(b.spent)} <span className="kpi-of">of {usd(b.cap)}</span>
+      </span>
+      <span className={`meter${share >= 0.8 ? " meter-high" : ""}`} role="meter" aria-valuemin={0} aria-valuemax={b.cap} aria-valuenow={b.spent} aria-label={`${b.label}: ${usd(b.spent)} of ${usd(b.cap)}`}>
+        <span className="meter-fill" style={{ width: `${share * 100}%` }} />
+      </span>
+      <span className="kpi-note">
+        Resets {ends}, in {b.daysLeft} days. At the last 7 days&apos; rate ({usd(b.perDay)} a day): {usd(b.projected)}
+        {over(b.projected)}.
+      </span>
+      {b.withRotation !== null && (
+        <span className="kpi-note">
+          With the daily rotation on (about {usd(ROTATION_DAY_USD)} a day): {usd(b.withRotation)}
+          {over(b.withRotation)}.
+        </span>
+      )}
+    </div>
+  );
+}
+
+const CATEGORY: Record<string, string> = {
+  AUTOMATABLE_TASK: "A task software could do",
+  MANUAL_ROLE: "A title for manual work",
+  INTEGRATION_DEBT: "Copying between systems",
+  DOCUMENT_FRICTION: "Paper and documents",
+  INFORMATION_SILO: "Knowledge scattered or undocumented",
+};
+
+// Leak check (§6.3 step 6): did the free keyword filter drop real leads? Phrases from those
+// posts wait here for the operator's verdict.
+function LeakSection({ l }: { l: Leak }) {
+  return (
+    <section className="card source" aria-labelledby="h-leak">
+      <div className="source-head">
+        <h2 id="h-leak">Leak check</h2>
+        <Meta className="source-meta" items={["2 % of the job posts the keyword filter drops", "Read daily at 05:00 UTC, ≈ $0.01 a day"]} />
+      </div>
+      <div className="kpis kpis-inline">
+        <StatTile label="Dropped posts sampled" value={l.sampled.toLocaleString("en-US")} note={`${l.pending} waiting to be read`} />
+        <StatTile label="Were real leads" value={pct(ratio(l.leads, l.checked))} note={`${l.leads} of ${l.checked} read`} />
+      </div>
+      <h3 className="health-sub">
+        Phrases to review <span className="num muted">{l.proposals.length}</span>
+      </h3>
+      <p className="muted source-note">
+        Each phrase comes word for word from a dropped post the AI judged a real lead. Approve it and the keyword filter keeps posts that use it
+        (for that vertical). A rejected phrase comes back only if its evidence doubles. {l.approved} approved and {l.rejected} rejected so far.
+      </p>
+      {l.proposals.length === 0 ? (
+        <p className="muted">Nothing to review.</p>
+      ) : (
+        <ul className="social-list">
+          {l.proposals.map((p) => (
+            <li key={p.id} className="social-item proposal">
+              <div className="lead-head">
+                <span className="lead-name">“{p.phrase}”</span>
+                <span className="verdict">{CATEGORY[p.category] ?? p.category}</span>
+                <span className="verdict">{p.vertical ? verticalLabel(p.vertical) : "Any vertical"}</span>
+                {p.back && <span className="verdict">Back: its evidence doubled</span>}
+              </div>
+              <span className="li-cell-sub">
+                In <span className="num">{p.evidence}</span> dropped {p.evidence === 1 ? "post" : "posts"} that were leads
+              </span>
+              {p.example && <p className="muted social-ai">“{p.example.length >= 220 ? `${p.example}…` : p.example}”</p>}
+              <ProposalActions id={p.id} phrase={p.phrase} />
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 

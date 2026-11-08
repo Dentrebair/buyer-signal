@@ -10,7 +10,7 @@ import { Facts, Meta } from "@/components/Meta.tsx";
 import { RowLink } from "@/components/RowLink.tsx";
 import { ThemeToggle } from "@/components/ThemeToggle.tsx";
 import { WebsiteAudit } from "@/components/WebsiteAudit.tsx";
-import { healthValue, movedNumbers } from "@/lib/health.ts";
+import { healthValue, inboxNotice } from "@/lib/health.ts";
 import { type Company, type CompanyCheckView, type Row, type View, QUEUES, loadInbox, parseView, viewHref } from "@/lib/inbox.ts";
 import {
   FAMILY_LABEL,
@@ -37,7 +37,8 @@ export const dynamic = "force-dynamic";
 
 export default async function Dashboard({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const view = parseView(await searchParams);
-  const [inbox, moved] = await Promise.all([loadInbox(view), movedNumbers()]);
+  const [inbox, notice] = await Promise.all([loadInbox(view), inboxNotice()]);
+  const moved = notice.moved;
   const selected = inbox.selected;
   const index = selected ? inbox.rows.findIndex((r) => r.id === selected.id) : -1;
   const next = index >= 0 ? (inbox.rows[index + 1] ?? inbox.rows[index - 1] ?? null) : null;
@@ -75,7 +76,15 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
         <Link href="/health" className="queue">
           <span>Health</span>
         </Link>
-        {moved.length > 0 && (
+        {notice.alerts.length > 0 && (
+          <Link href="/health#alerts" className="health-alert is-worse">
+            <Warning size={16} aria-hidden />
+            <span>
+              <strong>{notice.alerts.length === 1 ? "1 alert today." : `${notice.alerts.length} alerts today.`}</strong> {notice.alerts[0]!.message}
+            </span>
+          </Link>
+        )}
+        {notice.alerts.length === 0 && moved.length > 0 && (
           <Link href="/health#drift" className={`health-alert${moved[0]!.worse ? " is-worse" : ""}`}>
             <Warning size={16} aria-hidden />
             <span>

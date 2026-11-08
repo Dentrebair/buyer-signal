@@ -1322,6 +1322,34 @@ watches the board improve on real cards throughout.
 resolution correct on a 30-company spot check; projected Apify cycle spend ≤ $4.50 on
 `/radar`.
 
+*Status, 2026-11-08: built.*
+- **Leak check** (`audit-dropped`, daily 05:00 UTC, ≤ 20 posts ≈ $0.01): a fixed 2 % of the trie's
+  drops (FNV hash of the post id) is kept 21 days in `drop_samples`, contacts masked. The AI
+  judges each (`buildLeakCheck`); a real lead's phrases, kept only when copied word for word (2–6
+  words), become `trie_proposals` per vertical with their evidence. The operator approves or
+  rejects on `/health` (RLS: proposed → approved or rejected only; the database records the
+  evidence decided on). A rejected phrase comes back when its evidence doubles. Approved phrases
+  join the trie (`trieFor`, re-read every minute). Migration 0022.
+- **Raw payload archive** (Q64): every fetched dataset page (Indeed) and LinkedIn run, personal
+  fields stripped (`stripPersonal`: no named people, street addresses, emails or phone numbers;
+  LinkedIn keeps text, dates and counts but no names, headlines or profile links), gzipped to the
+  private Supabase Storage bucket `raw` at `raw/{source}/{day}/{run}-{part}.json.gz`. A failed
+  upload is logged and the run carries on. `purge-raw` (daily 03:45) deletes day folders older than
+  21 days. Verified live 2026-11-08 (upload, list, purge, anon read refused). No replay script yet.
+- **Alerts and error tracking** (Q65): `daily-alerts` (06:00 UTC) checks budget ≥ 80 % (Apify
+  cycle, AI month), failed runs and dead-lettered jobs in 24 h, no new cards in 24 h (only on a
+  day searches ran or with the rotation on) and worse drift numbers. Saved in `alerts` (migration
+  0023) for `/health` and the inbox sidebar; emailed through Resend when `RESEND_API_KEY` and
+  `ALERT_EMAIL_TO` are set (not yet exercised live: needs the key). Sentry (`@sentry/node`
+  10.78) in the worker (jobs failing for good, pg-boss errors, a failed start) and the web
+  server (`instrumentation.ts` `onRequestError`), off until `SENTRY_DSN` is set; browser errors
+  are not sent yet.
+- **Acceptance:** recall gate met (§6.3, 93.0 % pooled after operator review); 1 MB HTML test
+  passes (`packages/integrations/test/sniff.test.ts`); projected Apify cycle spend on `/health`
+  (Budget): $1.50 at the last 7 days' rate, $2.57 with the daily rotation on, against $4.50;
+  spot check (`npm run spot-check`, `docs/sprint2-spotcheck.md`): 23 of 30 homepages name their
+  company, 3 do not and 4 did not load, for the operator to confirm.
+
 **Sprint 3 — UI completion + drafts.**
 Badges, Proof Viewer, Teardown card, three-email drafts with Copy, Mark as sent / Reject,
 resurfacing rules, `/radar` telemetry.

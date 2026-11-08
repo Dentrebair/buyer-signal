@@ -4,11 +4,13 @@ import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type pg from "pg";
 import { type LlmClient, type StructuredIntelligence, Q, apifyCycleKey, auditSite, parseHtml } from "@bs/core";
-import { claimSeeds, createPool, labelLiPost, withTransaction } from "@bs/db";
+import { approvedAtoms, claimSeeds, createPool, labelLiPost, recordDropSample, withTransaction } from "@bs/db";
 import type { ApifyRun, SniffResult } from "@bs/integrations";
 import {
   type Deps,
   type Send,
+  auditDropped,
+  dailyAlertsJob,
   cardLiComment,
   cardLiPost,
   driftCheck,
@@ -61,9 +63,10 @@ function fakes(
     ages?: Record<string, Date | null | "error">;
     sniffs?: Record<string, SniffResult>;
     lagging?: boolean; rotation?: boolean; now?: Date;
-    dataset?: object[]; liCard?: Record<string, unknown>; liRead?: (user: string) => object } = {},
+    dataset?: object[]; liCard?: Record<string, unknown>; liRead?: (user: string) => object; leak?: (user: string) => object } = {},
 ) {
   const sent: { queue: string; data: any; opts?: object }[] = [];
+  const archived: { source: string; day: string; runId: string; part: string; items: unknown[] }[] = [];
   const started: object[] = [];
   const run: ApifyRun = {
     id: RUN_ID,
@@ -81,6 +84,8 @@ function fakes(
           { data: req.parse({ notes: "fake", action: "finish", query: null, url: null, domain: over.resolveTo?.domain ?? null, size_band: "11-50", size_evidence_url: null, vertical_match: "yes", place_match: "yes", summary: "A test company." }) as any, model: "fake/model", costUsd: 0.002, citations: over.resolveTo?.cited ?? [] }
         : req.schemaName === "linkedin_read"
           ? { data: req.parse(over.liRead!(req.user)) as any, model: "fake/model", costUsd: 0.0004 }
+        : req.schemaName === "leak_check"
+          ? { data: req.parse(over.leak!(req.user)) as any, model: "fake/model", costUsd: 0.0003 }
         : req.schemaName === "linkedin_card"
           ? { data: req.parse({ ...si, vertical: "logistics", ...over.liCard }) as any, model: "fake/model", costUsd: 0 }
           : req.schemaName === "seed_extraction" // a run with no vertical asks for it
@@ -109,6 +114,8 @@ function fakes(
       },
     },
     sniff: async (x) => over.sniffs?.[x.domain] ?? { reachable: false, reason: "no fake" },
+    archive: { put: async (x) => void archived.push(x), purge: async () => 0 },
+    mailer: null,
     send,
     settings: {
       apifyCycleCapUsd: over.capUsd ?? 4.5,
@@ -119,11 +126,12 @@ function fakes(
       socialSlotsPerDay: 1,
       liPostsPerTopic: 5,
       liCommentsPerPost: 5,
+      healthUrl: "http://localhost:3000/health",
     },
     now: () => over.now ?? NOW,
     log: () => {},
   };
-  return { deps, sent, started, rdapCalls };
+  return { deps, sent, started, rdapCalls, archived };
 }
 
 async function cleanup(pool: pg.Pool) {
@@ -154,6 +162,9 @@ async function cleanup(pool: pg.Pool) {
   await pool.query("delete from resolve_queue where natural_id like 'post:linkedin:%' and payload::text like '%Li Test Freight%'");
   await pool.query("delete from domain_cache where key like 'li test freight%'");
   await pool.query("delete from eval_cases where headline like '%Li Test Freight%'");
+  await pool.query("delete from drop_samples where natural_id like 'job:indeed:leaktest%'");
+  await pool.query("delete from alerts where day = '2000-01-04'");
+  await pool.query("delete from trie_proposals where phrase like 'leaktest %'");
   await pool.query("delete from drift_checks where day = '2000-01-05'");
   // Arms the tests' runs created (typed titles), once their runs are gone.
   await pool.query("delete from search_arms a where a.source = 'manual' and not exists (select 1 from run_arms ra where ra.run_id is not null and ra.arm_id = a.id)");
@@ -277,7 +288,7 @@ describe.skipIf(!process.env.DATABASE_URL)("worker pipeline (database)", { timeo
             ],
           }
         : { has_pain: false, pains: ["ignored when no pain"], author_relation: "employee", stance: "commenting", author_company: null, author_country: "unknown", comments: [] };
-    const { deps, sent, started } = fakes(pool, { dataset: liItems, liRead });
+    const { deps, sent, started, archived } = fakes(pool, { dataset: liItems, liRead });
     const job = { vertical: "logistics" as const, topics: ["freight invoices"], posts: 5, comments: 10 };
     expect(await startLiRun(deps, job, "test-li-key")).toEqual({ started: RUN_ID });
     expect(await startLiRun(deps, job, "test-li-key")).toEqual({ started: RUN_ID }); // retry: no second run
@@ -300,6 +311,8 @@ describe.skipIf(!process.env.DATABASE_URL)("worker pipeline (database)", { timeo
     expect(spent).toBeCloseTo(8 * 0.002 + 0.00005, 6);
 
     const counts = await fetchLiRun(deps, sent.find((x) => x.queue === Q.fetchLiRun)!.data);
+    // The raw items are archived (Q64) under the run, as fetched, for re-runs.
+    expect(archived).toEqual([{ source: "li_posts", day: NOW.toISOString().slice(0, 10), runId: runRow.id, part: "all", items: liItems }]);
     expect(counts).toMatchObject({ raw_items_ingested: 5, dropped_stale_count: 1, dropped_trie_count: 0 });
     const reads = sent.filter((x) => x.queue === Q.readLiPost);
     expect(reads).toHaveLength(4);
@@ -374,6 +387,66 @@ describe.skipIf(!process.env.DATABASE_URL)("worker pipeline (database)", { timeo
     expect((await pool.query("select count(*)::int n from eval_cases where li_post_id = $1", [p1])).rows[0].n).toBe(0);
     await pool.query("delete from ingestion_runs where apify_run_id = $1", [RUN_ID]); // posts and comments go with it
     await pool.query("delete from spend_events where ref = $1", [RUN_ID]);
+  });
+
+  it("leak check: sampled trie drops read daily, real leads' phrases proposed, decided by the operator (§6.3 step 6)", async () => {
+    const sample = (n: number) =>
+      recordDropSample(pool, { runId: null as unknown as string, naturalId: `job:indeed:leaktest${n}`, vertical: "logistics", country: "us", title: "Office Assistant", text: `Day ${n}: leaktest rekey orders by hand, call pat@x.example or +1 555 010 0000.` });
+    await sample(1);
+    await sample(1); // a retried fetch adds nothing
+    await sample(2);
+    expect((await pool.query("select count(*)::int n, min(text) t from drop_samples where natural_id like 'job:indeed:leaktest%'")).rows[0]).toEqual({ n: 2, t: "Day 1: leaktest rekey orders by hand, call [email] or [phone]." });
+    const leak = () => ({ is_lead: true, reason: "Re-keying orders", phrases: [{ phrase: "leaktest rekey orders", category: "INTEGRATION_DEBT" }, { phrase: "leaktest not in the post", category: "AUTOMATABLE_TASK" }] });
+    const { deps } = fakes(pool, { leak });
+    const mine = "job:indeed:leaktest"; // the audit reads this test's samples only, never real ones
+    expect(await auditDropped(deps, mine)).toEqual({ checked: 2, leads: 2, phrases: 2 });
+    const p = (await pool.query("select id, phrase, category, vertical, status, evidence, cardinality(examples) ex from trie_proposals where phrase like 'leaktest %'")).rows;
+    expect(p.map(({ id: _id, ...x }) => x)).toEqual([{ phrase: "leaktest rekey orders", category: "INTEGRATION_DEBT", vertical: "logistics", status: "proposed", evidence: 2, ex: 2 }]);
+
+    // The operator rejects it (as the UI does, under RLS); the database records the evidence.
+    await withTransaction(pool, async (c) => {
+      await c.query("set local role authenticated");
+      await c.query("update trie_proposals set status = 'rejected', reason = 'too broad' where id = $1", [p[0].id]);
+    });
+    expect((await pool.query("select status, evidence_at_decision from trie_proposals where id = $1", [p[0].id])).rows[0]).toEqual({ status: "rejected", evidence_at_decision: 2 });
+    // It comes back only once its evidence doubles (2 → 4).
+    await sample(3);
+    await auditDropped(deps, mine);
+    expect((await pool.query("select status from trie_proposals where id = $1", [p[0].id])).rows[0].status).toBe("rejected");
+    await sample(4);
+    await auditDropped(deps, mine);
+    expect((await pool.query("select status, evidence from trie_proposals where id = $1", [p[0].id])).rows[0]).toEqual({ status: "proposed", evidence: 4 });
+
+    // Approved, it is in the trie's extra atoms.
+    await withTransaction(pool, async (c) => {
+      await c.query("set local role authenticated");
+      await c.query("update trie_proposals set status = 'approved' where id = $1", [p[0].id]);
+    });
+    expect((await approvedAtoms(pool)).vertical.logistics?.INTEGRATION_DEBT).toContain("leaktest rekey orders");
+  });
+
+  it("daily alerts: saved for /health, emailed once when a mailer is set, a failed email loses nothing (Q65)", async () => {
+    const day = new Date("2000-01-04T06:00:00Z"); // test-only key; the inputs are the live 24 h
+    const mails: { subject: string; text: string }[] = [];
+    const base = { ...fakes(pool).deps, now: () => day };
+    // Rotation on, so "no cards" can fire whatever today's data: there is at least one alert to check.
+    const settings = { ...base.settings, rotationEnabled: true };
+    await pool.query("insert into ingestion_runs (job_key, job_type, status, started_at) values ('test-alert-run', 'indeed', 'failed', now())");
+    try {
+      const sent = await dailyAlertsJob({ ...base, settings, mailer: { send: async (m) => void mails.push(m) } });
+      expect(sent.emailed).toBe(true);
+      expect(mails).toHaveLength(1);
+      expect(mails[0]!.text).toContain("Runs failed in the last 24 hours");
+      const rows = (await pool.query("select kind, emailed from alerts where day = '2000-01-04'")).rows;
+      expect(rows.some((r) => r.kind === "failed_runs" && r.emailed)).toBe(true);
+      // The email provider down: the alerts are still saved, marked not emailed.
+      await pool.query("delete from alerts where day = '2000-01-04'");
+      const failed = await dailyAlertsJob({ ...base, settings, mailer: { send: async () => { throw new Error("resend 500"); } } });
+      expect(failed.emailed).toBe(false);
+      expect((await pool.query("select bool_or(emailed) e, count(*)::int n from alerts where day = '2000-01-04'")).rows[0]).toEqual({ e: false, n: failed.alerts });
+    } finally {
+      await pool.query("delete from ingestion_runs where job_key = 'test-alert-run'");
+    }
   });
 
   it("drift check: every health number judged and stored once a day, free (agreed 2026-11-08)", async () => {

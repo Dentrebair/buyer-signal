@@ -148,6 +148,25 @@ function shippedTrie(vertical: VerticalSlug | null | undefined): Trie {
   return t;
 }
 
+// The shipped trie plus phrases the operator approved from the leak check (§6.3 step 6), compiled
+// once per vertical and version (the worker bumps the version when the approved list changes).
+export interface ApprovedAtoms {
+  version: string;
+  core: AtomList;
+  vertical: Partial<Record<VerticalSlug, AtomList>>;
+}
+const withApproved = new Map<string, Trie>();
+export function trieFor(vertical: VerticalSlug | null | undefined, approved?: ApprovedAtoms | null): Trie {
+  if (!approved || (!Object.keys(approved.core).length && !Object.keys(approved.vertical).length)) return shippedTrie(vertical);
+  const key = `${vertical ?? "core"}|${approved.version}`;
+  let t = withApproved.get(key);
+  if (!t) {
+    t = compileAtoms(SEED_ATOMS, MINED_ATOMS.core, vertical ? (MINED_ATOMS.vertical[vertical] ?? {}) : {}, approved.core, vertical ? (approved.vertical[vertical] ?? {}) : {});
+    withApproved.set(key, t);
+  }
+  return t;
+}
+
 export function matchAtoms(text: string, vertical?: VerticalSlug | null, trie = shippedTrie(vertical)): GateMatch[] {
   return matchTrie(trie, text);
 }

@@ -26,6 +26,7 @@
     "fingerprints:update": "tsx scripts/fingerprints-update.ts",
     "sniff:test": "node --env-file=.env.local --import tsx scripts/sniff-test.ts",
     "mine": "node --env-file=.env.local --import tsx scripts/mine.ts",
+    "spot-check": "node --env-file=.env.local --import tsx scripts/spot-check.ts",
     "tier:backfill": "node --env-file=.env.local --import tsx scripts/tier-backfill.ts"
   },
   "devDependencies": {

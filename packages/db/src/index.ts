@@ -8,3 +8,5 @@ export * from "./social.ts";
 export * from "./arms.ts";
 export * from "./linkedin.ts";
 export * from "./health.ts";
+export * from "./leakCheck.ts";
+export * from "./alerts.ts";

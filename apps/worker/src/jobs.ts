@@ -57,6 +57,18 @@ import {
   type CardLiPost,
   type CardLiComment,
   liCommentCardGate,
+  type RawArchive,
+  type ApprovedAtoms,
+  type Mailer,
+  alertEmail,
+  dailyAlerts,
+  AUDIT_PER_DAY,
+  SAMPLE_KEEP_DAYS,
+  buildLeakCheck,
+  sampled,
+  trieFor,
+  type RawSource,
+  RAW_KEEP_DAYS,
   type LiRead,
   LI_ARM_COUNTRY,
   LI_MAX_COMMENTS,
@@ -113,6 +125,14 @@ import {
   unfinishedRuns,
   upsertCompany,
   saveCompanyCheck,
+  approvedAtoms,
+  alertInputs,
+  saveAlerts,
+  markSampleError,
+  pendingSamples,
+  purgeDropSamples,
+  recordDropSample,
+  saveLeakCheck,
   driftCounts,
   saveDriftChecks,
   withTransaction,
@@ -137,6 +157,7 @@ export interface Settings {
   liPostsPerTopic: number; // LI_POSTS_PER_TOPIC (§4.1d)
   liCommentsPerPost: number; // LI_COMMENTS_PER_POST
   searchDailyCap: number; // SEARCH_DAILY_CAP: paid website searches per UTC day (§5.1 step 5c)
+  healthUrl: string; // HEALTH_URL: the link in the alert email
 }
 
 // `tx`: enqueue inside that transaction, so the job exists only if the transaction commits.
@@ -154,6 +175,8 @@ export interface Deps {
   fetchPage: (url: string) => Promise<Page | null>;
   rdap: DomainAge;
   sniff: (x: SniffInput) => Promise<SniffResult>;
+  archive: RawArchive;
+  mailer: Mailer | null; // null until RESEND_API_KEY and ALERT_EMAIL_TO are set: alerts stay on /health
   send: Send;
   settings: Settings;
   now: () => Date;
@@ -309,6 +332,8 @@ export async function fetchDataset(d: Deps, job: FetchDataset): Promise<Partial<
   const run = (await d.pool.query<{ country: "in" | "ae" | "us"; vertical: string | null }>("select country, vertical from ingestion_runs where id = $1", [job.runId])).rows[0];
   if (!run) throw new Error(`ingestion run ${job.runId} not found`);
   const items = await d.apify.datasetItems(job.datasetId, job.offset, PAGE);
+  await archiveRaw(d, "indeed", job.runId, String(job.offset), items);
+  const approved = await approvedAtomsCached(d);
   const counts: Partial<Record<DropCounter, number>> = { raw_items_ingested: items.length };
   const inc = (k: DropCounter) => (counts[k] = (counts[k] ?? 0) + 1);
 
@@ -325,10 +350,16 @@ export async function fetchDataset(d: Deps, job: FetchDataset): Promise<Partial<
     }
     // Mark seen and enqueue in one transaction: a crash in between must not leave a post
     // marked seen but never extracted (a retry would then drop it as a duplicate).
-    const gate = gateJobPost(post, run.vertical as VerticalSlug | null);
+    const gate = gateJobPost(post, run.vertical as VerticalSlug | null, trieFor(run.vertical as VerticalSlug | null, approved));
     const outcome = await withTransaction(d.pool, async (c): Promise<DropCounter | "sent"> => {
       if (!(await markSeen(c, post.naturalId))) return "dropped_dedup_count";
-      if (!gate.pass) return gate.reason === "recruiter" ? "dropped_recruiter_count" : "dropped_trie_count";
+      if (!gate.pass && gate.reason === "recruiter") return "dropped_recruiter_count";
+      if (!gate.pass) {
+        // Leak check (§6.3 step 6): a fixed 2 % of the trie's drops is kept for the AI to read.
+        if (sampled(post.naturalId))
+          await recordDropSample(c, { runId: job.runId, naturalId: post.naturalId, vertical: run.vertical, country: run.country, title: post.title, text: post.description });
+        return "dropped_trie_count";
+      }
       if (!post.company) return "dropped_unresolved_count"; // nothing to resolve a website from
       const payload: ExtractLlmInput = {
         runId: job.runId,
@@ -405,6 +436,7 @@ export async function fetchLiRun(d: Deps, job: FetchLiRun): Promise<Partial<Reco
     items.push(...page);
     if (page.length < LI_PAGE) break;
   }
+  await archiveRaw(d, "li_posts", job.runId, "all", items);
   const { posts, comments, skipped } = mapLiItems(items);
   const fresh = posts.filter((p) => checkFreshness(p.postedAt, d.now(), true).fresh);
   const counts: Partial<Record<DropCounter, number>> = {
@@ -817,6 +849,75 @@ export async function sniffDomain(d: Deps, job: SniffDomain): Promise<string> {
     await finishSeed(c, job.seedId, "done");
   });
   return `sniffed ${seed.domain}: ${res.tech.length} tech, ${signals.map((s) => s.sourceType).join("+") || "no website signal"}`;
+}
+
+// ── audit-dropped: daily leak check (§6.3 step 6) ────────────────────────────
+// Phrases the operator approved join the trie; read at most once a minute.
+const APPROVED_TTL_MS = 60_000;
+let approvedCache: { at: number; value: ApprovedAtoms } | null = null;
+async function approvedAtomsCached(d: Pick<Deps, "pool">): Promise<ApprovedAtoms> {
+  if (approvedCache && Date.now() - approvedCache.at < APPROVED_TTL_MS) return approvedCache.value;
+  approvedCache = { at: Date.now(), value: await approvedAtoms(d.pool) };
+  return approvedCache.value;
+}
+
+export async function auditDropped(d: Pick<Deps, "pool" | "llm" | "log">, idPrefix = ""): Promise<{ checked: number; leads: number; phrases: number }> {
+  const out = { checked: 0, leads: 0, phrases: 0 };
+  for (const s of await pendingSamples(d.pool, AUDIT_PER_DAY, idPrefix)) {
+    let read;
+    try {
+      read = await d.llm.json("extraction", buildLeakCheck({ title: s.title, text: s.text }));
+    } catch (e) {
+      if ((e as { retryable?: unknown }).retryable === false) {
+        await markSampleError(d.pool, s.id);
+        continue;
+      }
+      throw e; // a provider outage: the job retries, and checked samples stay checked
+    }
+    out.phrases += await withTransaction(d.pool, (c) => saveLeakCheck(c, s, read.data));
+    out.checked++;
+    if (read.data.is_lead) out.leads++;
+  }
+  if (out.leads) d.log("leak check: dropped posts that were leads", out);
+  return out;
+}
+
+// ── daily-alerts (Q65) ──────────────────────────────────────────────────────
+// After the night's jobs: what needs the operator is saved (shown on /health) and, when a mailer
+// is set up, emailed once. A failed email is logged; the alerts stay saved.
+export async function dailyAlertsJob(d: Pick<Deps, "pool" | "mailer" | "settings" | "now" | "log">): Promise<{ alerts: number; emailed: boolean }> {
+  const day = d.now().toISOString().slice(0, 10);
+  const alerts = dailyAlerts(await alertInputs(d.pool, d.settings.rotationEnabled));
+  if (!alerts.length) return { alerts: 0, emailed: false };
+  let emailed = false;
+  if (d.mailer) {
+    try {
+      await d.mailer.send(alertEmail(alerts, day, d.settings.healthUrl));
+      emailed = true;
+    } catch (e) {
+      d.log("alert email failed; alerts saved", { error: (e as Error).message });
+    }
+  }
+  await saveAlerts(d.pool, day, alerts, emailed);
+  d.log("daily alerts", { alerts: alerts.map((a) => a.kind), emailed });
+  return { alerts: alerts.length, emailed };
+}
+
+// ── Raw payload archive (Q64) ───────────────────────────────────────────────
+// A convenience for re-runs, never a reason to lose a run: a failed upload is logged and the
+// fetch carries on.
+async function archiveRaw(d: Deps, source: RawSource, runId: string, part: string, items: unknown[]): Promise<void> {
+  if (!items.length) return;
+  try {
+    await d.archive.put({ source, day: d.now().toISOString().slice(0, 10), runId, part, items });
+  } catch (e) {
+    d.log("raw archive failed; run continues", { source, runId, part, error: (e as Error).message });
+  }
+}
+
+// Daily: raw archives older than 21 days are deleted (§18.9), and so are leak-check samples.
+export async function purgeRaw(d: Pick<Deps, "archive" | "now" | "pool">): Promise<{ files: number; samples: number }> {
+  return { files: await d.archive.purge(RAW_KEEP_DAYS, d.now()), samples: await purgeDropSamples(d.pool, SAMPLE_KEEP_DAYS) };
 }
 
 // ── poll-runs: webhook safety net, and the only path locally (Apify can't reach localhost) ──

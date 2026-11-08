@@ -7,6 +7,7 @@
     "@bs/core": "*",
     "@bs/db": "*",
     "@bs/integrations": "*",
+    "@sentry/node": "^10.78.0",
     "pg-boss": "12.38.0",
     "zod": "4.6.7"
   }

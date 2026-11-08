@@ -29,7 +29,15 @@ export interface EvalRunRow {
   disagreements: number;
 }
 
+export interface AlertRow {
+  day: string;
+  kind: string;
+  message: string;
+  emailed: boolean;
+}
+
 export interface Health {
+  alerts: AlertRow[]; // the last 3 days, newest first (Q65)
   day: string | null;
   drift: DriftRow[];
   evals: EvalRunRow[]; // newest first
@@ -72,14 +80,23 @@ export function loadHealth(): Promise<Health> {
            join eval_cases ec on ec.id = (d ->> 'id')::uuid`,
       )
     ).rows;
-    return { day: rows[0]?.day ?? null, drift, evals, labelled, disagreements };
+    const alerts = (
+      await c.query<AlertRow>(
+        "select to_char(a.day, 'YYYY-MM-DD') as day, a.kind, a.message, a.emailed from alerts a where a.day > current_date - 3 order by a.day desc, a.kind",
+      )
+    ).rows;
+    return { alerts, day: rows[0]?.day ?? null, drift, evals, labelled, disagreements };
   });
 }
 
-// The inbox banner: numbers that moved at the latest check, worst first.
-export async function movedNumbers(): Promise<DriftRow[]> {
+// The inbox banner: today's alerts first (Q65), else health numbers that moved, worst first.
+export async function inboxNotice(): Promise<{ alerts: AlertRow[]; moved: DriftRow[] }> {
   const h = await loadHealth();
-  return h.drift.filter((r) => r.verdict === "moved").sort((a, b) => Number(b.worse) - Number(a.worse));
+  const today = new Date().toISOString().slice(0, 10);
+  return {
+    alerts: h.alerts.filter((a) => a.day === today),
+    moved: h.drift.filter((r) => r.verdict === "moved").sort((a, b) => Number(b.worse) - Number(a.worse)),
+  };
 }
 
 export const healthValue = (r: Pick<DriftRow, "kind">, v: number | null) =>

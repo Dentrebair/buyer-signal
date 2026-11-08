@@ -22,6 +22,9 @@ export const Q = {
   pollRuns: "poll-runs",
   reconcileApify: "reconcile-apify",
   driftCheck: "drift-check",
+  purgeRaw: "purge-raw",
+  auditDropped: "audit-dropped",
+  dailyAlerts: "daily-alerts",
   deadLetter: "dead-letter",
 } as const;
 export type QueueName = (typeof Q)[keyof typeof Q];

@@ -1,11 +1,12 @@
 // Worker: runs every pipeline step on pg-boss (PRD §3, §5.2, §5.3a).
 // Usage: npm run worker
+import * as Sentry from "@sentry/node";
 import { PgBoss } from "pg-boss";
 import { z } from "zod";
 import { type QueueName, ApifyRunEvent, CardLiComment, CardLiPost, ExtractLlm, FetchDataset, FetchLiRun, Q, ReadLiPost, SniffDomain, StartBoardRun, StartLiRun } from "@bs/core";
 import { BudgetExceededError, createPool, gatedLlm } from "@bs/db";
-import { ApifyClient, OpenRouterClient, ProviderError, RdapClient, fetchPage, loadFingerprints, sniffWebsite } from "@bs/integrations";
-import { type Deps, cardLiComment, cardLiPost, driftCheck, extractLlm, fetchDataset, fetchLiRun, ingestRotation, readLiPost, startLiRun, onApifyRunEvent, syncSearchArms, pollRuns, reconcileApify, resolveBatch, sniffDomain, sniffSeeds, startBoardRun } from "./jobs.ts";
+import { ApifyClient, OpenRouterClient, ProviderError, RdapClient, ResendMailer, SupabaseRawArchive, fetchPage, loadFingerprints, sniffWebsite } from "@bs/integrations";
+import { type Deps, auditDropped, dailyAlertsJob, cardLiComment, cardLiPost, driftCheck, purgeRaw, extractLlm, fetchDataset, fetchLiRun, ingestRotation, readLiPost, startLiRun, onApifyRunEvent, syncSearchArms, pollRuns, reconcileApify, resolveBatch, sniffDomain, sniffSeeds, startBoardRun } from "./jobs.ts";
 
 const env = z
   .object({
@@ -19,8 +20,21 @@ const env = z
     SOCIAL_SLOTS_PER_DAY: z.coerce.number().int().min(0).max(5).default(1), // LinkedIn post searches a day
     LI_POSTS_PER_TOPIC: z.coerce.number().int().min(1).max(50).default(5),
     LI_COMMENTS_PER_POST: z.coerce.number().int().min(0).max(20).default(5),
+    // Q65: the daily alert email, sent only when both are set (Resend); and error tracking.
+    RESEND_API_KEY: z.string().min(1).optional(),
+    ALERT_EMAIL_TO: z.email().optional(),
+    ALERT_EMAIL_FROM: z.string().min(3).optional(),
+    HEALTH_URL: z.url().default("http://localhost:3000/health"),
+    SENTRY_DSN: z.url().optional(),
   })
   .parse(process.env);
+
+// Q65: error tracking, off until SENTRY_DSN is set. Jobs that fail for good, pg-boss errors and
+// a failed start are reported; retried errors are not (they are expected and logged).
+if (env.SENTRY_DSN) Sentry.init({ dsn: env.SENTRY_DSN, environment: process.env.NODE_ENV ?? "development", tracesSampleRate: 0 });
+const report = (e: unknown, extra: Record<string, unknown> = {}) => {
+  if (env.SENTRY_DSN) Sentry.captureException(e, { extra });
+};
 
 const log = (msg: string, extra: object = {}) => console.log(JSON.stringify({ t: new Date().toISOString(), msg, ...extra }));
 // Errors from pg / pg-boss are often plain objects; keep the fields that say what happened.
@@ -40,6 +54,8 @@ const deps: Deps = {
   fetchPage: (url) => fetchPage(url),
   rdap: new RdapClient(),
   sniff: (x) => sniffWebsite(x),
+  archive: new SupabaseRawArchive(),
+  mailer: env.RESEND_API_KEY && env.ALERT_EMAIL_TO ? new ResendMailer(env.RESEND_API_KEY, env.ALERT_EMAIL_TO, env.ALERT_EMAIL_FROM) : null,
   send: (queue, data, opts, tx) =>
     boss.send(queue, data, { ...opts, ...(tx ? { db: { executeSql: (text: string, values?: unknown[]) => tx.query(text, values) } } : {}) }),
   settings: {
@@ -51,6 +67,7 @@ const deps: Deps = {
     socialSlotsPerDay: env.SOCIAL_SLOTS_PER_DAY,
     liPostsPerTopic: env.LI_POSTS_PER_TOPIC,
     liCommentsPerPost: env.LI_COMMENTS_PER_POST,
+    healthUrl: env.HEALTH_URL,
   },
   now: () => new Date(),
   log,
@@ -89,11 +106,17 @@ const queues: QueueDef<any>[] = [
   { name: Q.reconcileApify, concurrency: 1, expireInSeconds: 120, schema: z.unknown(), run: (d) => reconcileApify(d) },
   // Free (SQL only): has the AI or a search drifted? Results on the inbox and Sources pages.
   { name: Q.driftCheck, concurrency: 1, expireInSeconds: 120, schema: z.unknown(), run: (d) => driftCheck(d) },
+  // Raw payload archive (Q64): files older than 21 days go.
+  { name: Q.purgeRaw, concurrency: 1, expireInSeconds: 300, schema: z.unknown(), run: (d) => purgeRaw(d) },
+  // Leak check (§6.3 step 6): at most 20 sampled trie drops a day, ≈ $0.01.
+  { name: Q.auditDropped, concurrency: 1, expireInSeconds: 600, schema: z.unknown(), run: (d) => auditDropped(d) },
+  // Q65: what needs the operator, saved for /health and emailed once a day when set up.
+  { name: Q.dailyAlerts, concurrency: 1, expireInSeconds: 120, schema: z.unknown(), run: (d) => dailyAlertsJob(d) },
 ];
 
 async function main() {
   loadFingerprints(); // fail at start, not on the first sniff, if the data file is missing
-  boss.on("error", (e) => log("pg-boss error", describe(e)));
+  boss.on("error", (e) => (log("pg-boss error", describe(e)), report(e, { where: "pg-boss" })));
   await boss.start();
   await boss.createQueue(Q.deadLetter, { retentionSeconds: 14 * 86400 }).catch(ignoreExists);
 
@@ -118,9 +141,11 @@ async function main() {
           const error = e instanceof z.ZodError ? `invalid payload: ${z.prettifyError(e)}` : e.message;
           await boss.send(Q.deadLetter, { queue: q.name, data: job.data, error });
           log("job failed (not retryable)", { queue: q.name, id: job.id, error });
+          report(e, { queue: q.name, job: job.id });
           return { failed: error };
         }
         log("job error (will retry)", { queue: q.name, id: job.id, retry: job.retryCount, ...describe(e) });
+        if ((job.retryCount ?? 0) >= RETRY.retryLimit) report(e, { queue: q.name, job: job.id, final: true }); // its last attempt: next stop dead-letter
         throw e;
       }
     });
@@ -131,6 +156,9 @@ async function main() {
   await boss.schedule(Q.reconcileApify, "15 3 * * *");
   await boss.schedule(Q.resolveBatch, "0 4 * * *");
   await boss.schedule(Q.driftCheck, "30 5 * * *"); // after the night's runs and resolves
+  await boss.schedule(Q.purgeRaw, "45 3 * * *");
+  await boss.schedule(Q.auditDropped, "0 5 * * *");
+  await boss.schedule(Q.dailyAlerts, "0 6 * * *"); // after the drift check (05:30)
   await boss.schedule(Q.sniffSeeds, "*/10 * * * *");
   // Daily rotation: off for now; runs are started by hand (Run now). To enable, uncomment and
   // set ROTATION_ENABLED=true. 02:00 is before the 04:00 resolve batch, so the day's new posts
@@ -159,7 +187,9 @@ async function shutdown(signal: string) {
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
 process.on("SIGINT", () => void shutdown("SIGINT"));
 
-main().catch((e) => {
+main().catch(async (e) => {
   log("worker failed to start", describe(e));
+  report(e, { where: "start" });
+  await Sentry.flush(2000);
   process.exit(1);
 });

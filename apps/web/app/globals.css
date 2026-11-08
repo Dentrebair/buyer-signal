@@ -694,3 +694,11 @@ g.is-active path { opacity: 0.8; }
   .bars-row { grid-template-columns: minmax(0, 1fr); gap: var(--space-3xs); }
   .kpis-inline { grid-template-columns: minmax(0, 1fr); }
 }
+.kpi-of { font-size: var(--text-md); font-weight: 500; color: var(--color-muted); letter-spacing: 0; }
+/* Meter: spend against its cap; the track is a lighter step of the fill, red from 80 % (the alert line). */
+.meter { display: block; height: 8px; border-radius: 4px; background: color-mix(in oklab, var(--viz-1) 22%, var(--color-sheet)); overflow: hidden; }
+.meter-fill { display: block; height: 100%; border-radius: 4px; background: var(--viz-1); }
+.meter-high { background: var(--opt-red-bg); }
+.meter-high .meter-fill { background: var(--opt-red); }
+.proposal-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); margin-top: var(--space-2xs); }
+.field-inline input { min-height: 32px; font-size: var(--text-sm); }
