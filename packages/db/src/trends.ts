@@ -45,8 +45,13 @@ export async function statementsToEmbed(db: Db, limit: number): Promise<{ id: st
   return (await db.query("select id, text from pain_statements where embedding is null order by created_at limit $1", [limit])).rows;
 }
 
+// One statement for the batch (one round trip per row took ≈ 15 s for 100).
 export async function saveEmbeddings(db: Db, rows: { id: string; vec: number[] }[]): Promise<void> {
-  for (const r of rows) await db.query("update pain_statements set embedding = $2::vector where id = $1", [r.id, `[${r.vec.join(",")}]`]);
+  if (!rows.length) return;
+  await db.query(
+    `update pain_statements p set embedding = v.e::vector from unnest($1::uuid[], $2::text[]) as v(id, e) where p.id = v.id`,
+    [rows.map((r) => r.id), rows.map((r) => `[${r.vec.join(",")}]`)],
+  );
 }
 
 export interface TrendStatement {
@@ -89,10 +94,11 @@ export interface TrendClusterRow {
 // The whole set is replaced in one transaction, so the page never sees half a run.
 export async function replaceTrends(c: pg.PoolClient, clusters: TrendClusterRow[]): Promise<void> {
   await c.query("delete from trend_clusters");
-  for (const t of clusters)
-    await c.query(
-      `insert into trend_clusters (vertical, label, summary, size, recent, previous, sources, examples, member_ids)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-      [t.vertical, t.label, t.summary, t.size, t.recent, t.previous, t.sources, t.examples, t.member_ids],
-    );
+  if (!clusters.length) return;
+  await c.query(
+    `insert into trend_clusters (vertical, label, summary, size, recent, previous, sources, examples, member_ids)
+     select * from jsonb_to_recordset($1::jsonb) as x(vertical text, label text, summary text, size int, recent int, previous int,
+            sources jsonb, examples text[], member_ids uuid[])`,
+    [JSON.stringify(clusters)],
+  );
 }

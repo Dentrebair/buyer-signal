@@ -5,28 +5,48 @@ import type { Db } from "./pool.ts";
 
 // Saves a run's posts and their comments; returns the ids of posts new to this run (a retry adds nothing).
 export async function saveLiItems(c: pg.PoolClient, runId: string, posts: LiPost[], comments: LiComment[]): Promise<string[]> {
-  const ids: string[] = [];
-  for (const p of posts) {
-    const r = await c.query<{ id: string }>(
+  if (!posts.length) return [];
+  // One statement for the posts and one for their comments (≈ 150 ms a round trip: a run of 2,000
+  // items one row at a time took minutes inside this transaction). Only posts new to the run get
+  // their comments, so a retry adds nothing.
+  const inserted = (
+    await c.query<{ id: string; post_id: string }>(
       `insert into li_posts (run_id, post_id, url, posted_at, body, author_type, author_name, author_headline, author_url, author_website,
                              likes, comment_count, shares, emails)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-       on conflict (run_id, post_id) do nothing returning id`,
-      [runId, p.postId, p.url, p.postedAt, p.text, p.authorType, p.authorName, p.authorHeadline, p.authorUrl, p.authorWebsite,
-        p.likes, p.comments, p.shares, emailsIn(p.text, p.authorHeadline)],
+       select $1, x.post_id, x.url, x.posted_at, x.body, x.author_type, x.author_name, x.author_headline, x.author_url, x.author_website,
+              x.likes, x.comment_count, x.shares, x.emails
+         from jsonb_to_recordset($2::jsonb) as x(post_id text, url text, posted_at timestamptz, body text, author_type text, author_name text,
+              author_headline text, author_url text, author_website text, likes int, comment_count int, shares int, emails text[])
+       on conflict (run_id, post_id) do nothing returning id, post_id`,
+      [
+        runId,
+        JSON.stringify(
+          posts.map((p) => ({
+            post_id: p.postId, url: p.url, posted_at: p.postedAt, body: p.text, author_type: p.authorType, author_name: p.authorName,
+            author_headline: p.authorHeadline, author_url: p.authorUrl, author_website: p.authorWebsite, likes: p.likes,
+            comment_count: p.comments, shares: p.shares, emails: emailsIn(p.text, p.authorHeadline),
+          })),
+        ),
+      ],
+    )
+  ).rows;
+  const idOf = new Map(inserted.map((r) => [r.post_id, r.id]));
+  const rows = comments
+    .filter((k) => idOf.has(k.postId))
+    .map((k) => ({
+      li_post_id: idOf.get(k.postId), comment_id: k.commentId, url: k.url, body: k.text, commented_at: k.createdAt, actor_type: k.actorType,
+      name: k.name, headline: k.headline, profile_url: k.profileUrl, is_author: k.isAuthor, likes: k.likes, emails: emailsIn(k.text, k.headline),
+    }));
+  if (rows.length)
+    await c.query(
+      `insert into li_comments (li_post_id, comment_id, url, body, commented_at, actor_type, name, headline, profile_url, is_author, likes, emails)
+       select * from jsonb_to_recordset($1::jsonb) as x(li_post_id uuid, comment_id text, url text, body text, commented_at timestamptz,
+              actor_type text, name text, headline text, profile_url text, is_author boolean, likes int, emails text[])
+       on conflict (li_post_id, comment_id) do nothing`,
+      [JSON.stringify(rows)],
     );
-    const id = r.rows[0]?.id;
-    if (!id) continue;
-    ids.push(id);
-    for (const k of comments.filter((x) => x.postId === p.postId)) {
-      await c.query(
-        `insert into li_comments (li_post_id, comment_id, url, body, commented_at, actor_type, name, headline, profile_url, is_author, likes, emails)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) on conflict (li_post_id, comment_id) do nothing`,
-        [id, k.commentId, k.url, k.text, k.createdAt, k.actorType, k.name, k.headline, k.profileUrl, k.isAuthor, k.likes, emailsIn(k.text, k.headline)],
-      );
-    }
-  }
-  return ids;
+  // In the order the run returned them, as before.
+  return posts.flatMap((p) => (idOf.has(p.postId) ? [idOf.get(p.postId)!] : []));
 }
 
 export interface LiPostToRead {
