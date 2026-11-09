@@ -5,6 +5,7 @@
 import { z } from "zod";
 import { toLlmJsonSchema } from "./extraction.ts";
 import type { LlmRequest } from "./providers.ts";
+import { escXml as esc } from "./text.ts";
 
 export const OutreachStrategy = z.enum(["direct_active_intent", "peer_benchmark_question", "educational_value_first"]);
 export type OutreachStrategy = z.infer<typeof OutreachStrategy>;
@@ -37,11 +38,6 @@ export function mergeDraft(
 // Opus 5.5 at $4 / $20, so a draft costs at most ≈ $0.06.
 export const DRAFT_MODELS = ["anthropic/claude-sonnet-5.5", "anthropic/claude-opus-5.5", "google/gemini-3.1-pro-preview", "openai/gpt-6.1-sol"] as const;
 
-export const STRATEGY_LABEL: Record<OutreachStrategy, string> = {
-  direct_active_intent: "Direct: they are acting on it now",
-  peer_benchmark_question: "Peer question: how others in their trade handle it",
-  educational_value_first: "Value first: a useful idea, no ask",
-};
 
 // One piece of evidence as the prompt sees it. Employee posts arrive as a pattern only (§9, Q61).
 export interface DraftEvidence {
@@ -105,7 +101,6 @@ The approaches:
 
 warning_banner: one short sentence for the sender when the evidence is thin, indirect or only observed (for example "Evidence is a pattern only: keep it general"), else null.`;
 
-const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 export function buildDraft(c: DraftCompany, strategy: OutreachStrategy): LlmRequest<DraftOut> {
   const ev = c.evidence.slice(0, 5).map((e) =>

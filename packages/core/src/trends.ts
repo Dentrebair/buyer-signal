@@ -5,6 +5,7 @@
 import { z } from "zod";
 import { toLlmJsonSchema } from "./extraction.ts";
 import type { LlmRequest } from "./providers.ts";
+import { escXml as esc } from "./text.ts";
 
 export const TREND_SOURCES = ["job_post", "li_post", "li_comment"] as const;
 export type TrendSource = (typeof TREND_SOURCES)[number];
@@ -83,7 +84,6 @@ Return JSON only:
 - label: the pain in 3 to 8 plain words, specific to the work ("Re-keying carrier invoices into accounting"), not a category ("Manual work").
 - summary: one sentence under 30 words: what the businesses do by hand and what it costs them, as the statements say. Never name a person or a company.`;
 
-const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 export function buildTrendLabel(x: { vertical: string | null; statements: string[] }): LlmRequest<TrendLabel> {
   return {

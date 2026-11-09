@@ -1,5 +1,6 @@
 // Dossier "Website audit" section (PRD §10.2): 4-Gate findings, notable tools, business contacts.
 // Shows only what was found; absences on a client-rendered site are unknown, not findings.
+import { webUrl } from "@bs/core/text";
 import { ArrowSquareOut, Browser, Envelope, Phone, WhatsappLogo } from "@phosphor-icons/react/ssr";
 import type { SiteAudit, Tech } from "@bs/core";
 import { ageLabel } from "@/lib/labels.ts";
@@ -77,7 +78,8 @@ export function WebsiteAudit({ company: c }: { company: AuditCompany }) {
 
 function Findings({ a }: { a: Partial<SiteAudit> }) {
   const intake: React.ReactNode[] = [];
-  for (const f of a.pain?.pdfForms ?? [])
+  // http(s) only: an audit stored before 2026-11-09 may hold a javascript: link from the scraped page.
+  for (const f of (a.pain?.pdfForms ?? []).filter((x) => webUrl(x.url)))
     intake.push(
       <>
         PDF form to print and fill:{" "}

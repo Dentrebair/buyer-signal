@@ -5,6 +5,7 @@ import { z } from "zod";
 import { toLlmJsonSchema } from "./extraction.ts";
 import { bareDomain, normalizeCompanyName } from "./names.ts";
 import type { LlmRequest } from "./providers.ts";
+import { escXml as esc } from "./text.ts";
 
 export const ResolveOutput = z.object({
   domain: z.string().nullable(),
@@ -23,7 +24,6 @@ Return JSON only, matching the schema:
 - confidence: high = the site's name and location match the company; low = anything less.
 Never answer from memory. Directories, job boards, social networks, maps and marketplaces (LinkedIn, Facebook, Instagram, Indeed, Glassdoor, Yelp, Justdial, IndiaMART, Yellow Pages, Google Maps) are not the company's website. A different company with a similar name is not a match: return null.`;
 
-const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 export interface ResolveQuery {
   company: string;

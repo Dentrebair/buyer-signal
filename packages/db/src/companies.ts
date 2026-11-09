@@ -173,3 +173,9 @@ export async function saveCompanyCheck(db: pg.Pool | pg.PoolClient, at: { domain
   if (at.domain) await db.query("update companies set company_check = $2 where domain = $1", [at.domain, check]);
   else await db.query("update companies set company_check = $2 where name_key = $1 and domain is null", [at.nameKey, check]);
 }
+
+// A post or comment already carded (by another run, topic or source) needs no second AI call.
+export async function challengeExists(db: pg.Pool | pg.PoolClient, naturalId: string): Promise<boolean> {
+  return ((await db.query("select 1 from challenges where natural_id = $1", [naturalId])).rowCount ?? 0) > 0;
+}
+

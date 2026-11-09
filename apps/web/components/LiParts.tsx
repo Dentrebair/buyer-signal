@@ -1,6 +1,7 @@
 // Pieces of a LinkedIn post search result (PRD §4.1d) shared by the server page and the Posts
 // board (a client component): no hooks, no server-only imports.
 import { ArrowSquareOut } from "@phosphor-icons/react/ssr";
+import { httpsUrl } from "@bs/core/text";
 import { Meta } from "@/components/Meta.tsx";
 import { ageLabel } from "@/lib/labels.ts";
 import type { LiCommentRow, LiPostRow } from "@/lib/linkedin.ts";
@@ -21,7 +22,7 @@ export const STANCE: Record<string, string> = {
   selling: "selling",
   commenting: "commenting",
 };
-export const https = (u: string | null) => (u && /^https:\/\//i.test(u) ? u : null);
+export const https = httpsUrl; // a link from scraped data renders only as https
 // A company page's "headline" is its follower count ("1,071 followers"): not a designation.
 export const headlineOf = (h: string | null) => (h && /\w/.test(h) && !/^\s*[\d.,]+\s*[km]?\s+followers?\s*$/i.test(h) ? h.trim() : null);
 // One paragraph, cut at a word: previews ignore the post's own line breaks.
@@ -103,22 +104,7 @@ function InboxStatus({ p }: { p: LiPostRow }) {
   return why ? <span className="verdict">Not a card: {why}</span> : null;
 }
 
-export function PostLinks({ p }: { p: LiPostRow }) {
-  return (
-    <span className="li-group-links">
-      <a href={`#post-${p.id}`} className="link post-open">
-        View post
-      </a>
-      <a href={p.url} target="_blank" rel="noopener noreferrer" className="link post-open">
-        On LinkedIn <ArrowSquareOut size={13} aria-hidden />
-        <span className="sr-only">(opens in a new tab)</span>
-      </a>
-      {p.has_pain && <span className="verdict verdict-green">Pain found</span>}
-    </span>
-  );
-}
 
-export const firstLine = (p: LiPostRow) => excerpt(p.body.split("\n").find((l) => l.trim()) ?? "", 140);
 
 export function Person({ name, url, type }: { name: string | null; url: string | null; type: string }) {
   const href = https(url);

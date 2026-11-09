@@ -12,7 +12,8 @@
     "./tier": "./src/tier.ts",
     "./bandit": "./src/bandit.ts",
     "./drafts": "./src/drafts.ts",
-    "./painTypes": "./src/painTypes.ts"
+    "./painTypes": "./src/painTypes.ts",
+    "./text": "./src/text.ts"
   },
   "dependencies": {
     "cheerio": "1.2.0",

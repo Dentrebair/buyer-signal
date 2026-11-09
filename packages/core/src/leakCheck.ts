@@ -5,6 +5,7 @@
 import { z } from "zod";
 import { toLlmJsonSchema } from "./extraction.ts";
 import type { LlmRequest } from "./providers.ts";
+import { escXml as esc } from "./text.ts";
 
 export const SAMPLE_PERCENT = 2;
 export const AUDIT_PER_DAY = 20; // ≈ $0.01 a day at most
@@ -34,7 +35,6 @@ Return JSON only:
 - reason: under 25 words, why.
 - phrases: when is_lead, up to 3 short phrases (2 to 6 words) copied word for word from the post that show the manual work, each with its category: AUTOMATABLE_TASK (a task software could do), MANUAL_ROLE (a title for such work), INTEGRATION_DEBT (copying between systems), DOCUMENT_FRICTION (paper, scans, PDFs, filing), INFORMATION_SILO (knowledge scattered or undocumented). Empty when is_lead is false.`;
 
-const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
 
 export function buildLeakCheck(post: { title: string; text: string }): LlmRequest<LeakCheck> {

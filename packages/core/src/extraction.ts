@@ -4,6 +4,7 @@ import { z } from "zod";
 import { StructuredIntelligence } from "./contracts.ts";
 import type { LlmRequest } from "./providers.ts";
 import { VERTICALS, VerticalSlug } from "./verticals.ts";
+import { escXml as esc } from "./text.ts";
 
 const MAX_WORDS = 1500;
 
@@ -50,7 +51,6 @@ const VERTICAL_RULE = `
   .map(([slug, label]) => `${slug} (${label})`)
   .join("; ")}. Judge it from the company's own business as the post or company name states it, never from the job role: a trading company hiring an accountant is wholesale_trading, not accounting. null if the post does not say what the company does or none fits.`;
 
-const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 export function truncateWords(text: string, max = MAX_WORDS): string {
   const words = text.split(/\s+/);

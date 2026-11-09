@@ -1,4 +1,5 @@
 // LinkedIn post search page (PRD §4.1d): the latest runs, and one run's posts with their comments.
+import { httpsUrl } from "@bs/core/text";
 import { asOperator } from "./operator.ts";
 
 export interface LiRun {
@@ -105,7 +106,7 @@ export function loadLinkedin(runId?: string | null): Promise<LinkedinPage> {
             order by p.has_pain desc nulls last, p.likes + p.comment_count desc`,
           [shown.id],
         )
-      ).rows.map((p) => ({ ...p, comments: [] }));
+      ).rows.map((p) => ({ ...p, url: httpsUrl(p.url) ?? "#", comments: [] })); // a link from scraped data renders only as https
       const comments = (
         await c.query<LiCommentRow & { li_post_id: string }>(
           `select k.li_post_id, k.id, k.url, k.body, k.actor_type, k.name, k.headline, k.profile_url, k.company, k.gist, k.resonates, k.emails,
@@ -119,7 +120,7 @@ export function loadLinkedin(runId?: string | null): Promise<LinkedinPage> {
         )
       ).rows;
       const byPost = new Map(posts.map((p) => [p.id, p]));
-      for (const { li_post_id, ...k } of comments) byPost.get(li_post_id)?.comments.push(k);
+      for (const { li_post_id, ...k } of comments) byPost.get(li_post_id)?.comments.push({ ...k, url: httpsUrl(k.url) });
     }
     const running = runs.some((r) => ACTIVE.includes(r.status) || r.reading > 0);
     return { runs, shown, posts, running };

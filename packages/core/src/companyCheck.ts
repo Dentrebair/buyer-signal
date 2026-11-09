@@ -7,6 +7,7 @@ import { toLlmJsonSchema } from "./extraction.ts";
 import { bareDomain } from "./names.ts";
 import type { LlmClient, LlmRequest } from "./providers.ts";
 import { COUNTRY_NAME, NOT_A_COMPANY_SITE, type ResolveOutput, pageMatch } from "./resolve.ts";
+import { escXml as esc } from "./text.ts";
 
 export const MAX_CHECK_STEPS = 6;
 export const MAX_CHECK_USD = 0.05;
@@ -71,7 +72,6 @@ Always fill domain, size_band, matches and summary with your best answer so far.
 
 Directories, job boards, social networks, maps and marketplaces (LinkedIn, Facebook, Instagram, Indeed, Glassdoor, Yelp, Justdial, IndiaMART, Yellow Pages, Google Maps) are never the company's website, and their pages cannot be opened; their search snippets may still show size. A different company with a similar name is not a match. You have at most ${MAX_CHECK_STEPS} turns: open the likely homepage or about page rather than searching again when a result looks right.`;
 
-const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 type Observation = { kind: "search"; query: string } | { kind: "page"; url: string; text: string | null; refused?: boolean };
 

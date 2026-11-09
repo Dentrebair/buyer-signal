@@ -27,6 +27,9 @@ export function isPublicAddress(ip: string): boolean {
   }
   const v6 = ip.toLowerCase();
   if (v6.startsWith("::ffff:")) return isPublicAddress(v6.slice(7));
+  // 64:ff9b:: (NAT64) and 2002:: (6to4) carry an IPv4 address inside, which could be a private one,
+  // and 2001:db8:: is for documentation: none is needed to reach a company website, so all refused.
+  if (v6.startsWith("64:ff9b:") || v6.startsWith("2002:") || v6.startsWith("2001:db8:")) return false;
   return !(v6 === "::" || v6 === "::1" || v6.startsWith("fc") || v6.startsWith("fd") || v6.startsWith("fe8") || v6.startsWith("fe9") || v6.startsWith("fea") || v6.startsWith("feb"));
 }
 

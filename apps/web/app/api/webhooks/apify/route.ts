@@ -17,7 +17,9 @@ function secretMatches(given: string | null): boolean {
 export async function POST(req: Request): Promise<Response> {
   if (!secretMatches(req.headers.get("x-apify-webhook-secret"))) return new Response(null, { status: 401 });
 
-  // Apify's run payload is a few KB; refuse anything large before parsing it.
+  // Apify's run payload is a few KB; refuse anything large before reading it, and again after (the
+  // header can be absent or wrong).
+  if (Number(req.headers.get("content-length") ?? 0) > 64_000) return new Response(null, { status: 413 });
   const text = await req.text();
   if (text.length > 64_000) return new Response(null, { status: 413 });
   let body: { resource?: { id?: unknown }; eventData?: { actorRunId?: unknown } };

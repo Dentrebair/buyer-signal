@@ -4,6 +4,7 @@
 // true: an empty shell proves nothing is missing.
 import { type CheerioAPI, load } from "cheerio";
 import type { Tech } from "./techstack.ts";
+import { webUrl } from "./text.ts";
 import type { Country, VerticalSlug } from "./verticals.ts";
 
 export const parseHtml = (html: string): CheerioAPI => load(html);
@@ -149,7 +150,12 @@ export function auditSite(x: SiteInput): SiteAudit {
 
   // Pain flags: manual intake the business runs today.
   const pdfForms = uniqBy(
-    anchors.filter((a) => /\.pdf(?:$|[?#])/i.test(a.href) && (PDF_FORM.test(a.text) || PDF_FORM.test(a.href))).map((a) => ({ url: absolute(a.href, a.page), label: PDF_FORM.test(a.text) ? a.text.slice(0, 120) : fileName(a.href) })),
+    anchors
+      .filter((a) => /\.pdf(?:$|[?#])/i.test(a.href) && (PDF_FORM.test(a.text) || PDF_FORM.test(a.href)))
+      .flatMap((a) => {
+        const url = absolute(a.href, a.page);
+        return url ? [{ url, label: PDF_FORM.test(a.text) ? a.text.slice(0, 120) : fileName(a.href) }] : [];
+      }),
     (p) => p.url,
   ).slice(0, 5);
   const hasMailto = anchors.some((a) => /^mailto:/i.test(a.href));
@@ -252,11 +258,12 @@ const major = (v: string | null) => (v && /^\d+/.test(v) ? Number(v.match(/^\d+/
 const uniq = <T>(xs: T[]) => [...new Set(xs)];
 const uniqBy = <T>(xs: T[], key: (x: T) => string) => [...new Map(xs.map((x) => [key(x), x])).values()];
 const fileName = (href: string) => decodeURIComponent(href.split(/[?#]/)[0]!.split("/").pop() ?? href).slice(0, 120);
-function absolute(href: string, page: string): string {
+// An absolute http(s) link, or null: a page's href can be javascript: or data: (and still end in .pdf).
+function absolute(href: string, page: string): string | null {
   try {
-    return new URL(href, page).toString();
+    return webUrl(new URL(href, page).toString());
   } catch {
-    return href;
+    return null;
   }
 }
 

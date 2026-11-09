@@ -107,6 +107,17 @@ export async function cacheDomain(db: Db, key: string, domain: string | null): P
 }
 
 // Apify cycle gate (Q58): reserve the run's worst case against apify:{cycle_start}.
+// Gives back a reservation for a run that never started (a concurrent attempt owns the key, or
+// Apify refused): the counter never goes below zero.
+export async function releaseApifyReservation(db: Db, cycleStart: Date, usd: number): Promise<void> {
+  await db.query("update spend_counters set total_usd = greatest(0, total_usd - $2) where key = $1", [apifyCycleKey(cycleStart), usd]);
+}
+
+// A run row recorded for a start Apify refused: nothing ran, so nothing of it is kept.
+export async function deleteRun(db: Db, id: string): Promise<void> {
+  await db.query("delete from ingestion_runs where id = $1", [id]);
+}
+
 export function reserveApifyRun(db: Db, cycleStart: Date, worstCaseUsd: number, capUsd: number): Promise<boolean> {
   return reserveSpend(db, apifyCycleKey(cycleStart), worstCaseUsd, capUsd);
 }

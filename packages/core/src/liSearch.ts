@@ -7,6 +7,7 @@ import { z } from "zod";
 import { AuthorRelationOut, Stance } from "./contracts.ts";
 import { toLlmJsonSchema } from "./extraction.ts";
 import type { LlmRequest } from "./providers.ts";
+import { escXml as esc, httpsUrl as https } from "./text.ts";
 
 // Verified 2026-11-08 from the actor's own pricing (FREE tier): every post and every comment is
 // one $0.002 event; a query with no results $0.001; start $0.00005 per GB.
@@ -59,7 +60,7 @@ const Str = z.string().nullish().transform((s) => s ?? null);
 const LiPostItem = z.object({
   type: z.literal("post"),
   id: z.string().regex(/^\d{10,25}$/),
-  linkedinUrl: z.string().url(),
+  linkedinUrl: z.string().regex(/^https:\/\/[^\s]+$/i), // https only: z.url() also accepts javascript:
   content: z.string().default(""),
   author: z.object({ type: Str, name: Str, info: Str, linkedinUrl: Str, website: Str }).partial().default({}),
   postedAt: z.object({ timestamp: z.number().optional(), date: z.string().optional() }).partial().nullish(),
@@ -104,7 +105,6 @@ export interface LiComment {
   likes: number;
 }
 
-const https = (u: string | null | undefined) => (u && /^https:\/\//i.test(u) ? u : null);
 // Some text arrives HTML-escaped, and some with the escape half gone: "Process Improvement amp;
 // Automation" (seen 2026-11-08), so a bare "amp;" between spaces is an ampersand too.
 const ENTITY: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", "#39": "'", nbsp: " " };
@@ -283,7 +283,6 @@ Return JSON only, matching the schema:
   - consequence: true when they state an impact: errors, delays, cost, stress, lost customers.
 Never put a person's name in pains or gist.`;
 
-const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 export function buildLiRead(post: { text: string; authorHeadline: string | null; authorType: string }, comments: { text: string; headline: string | null; actorType: string }[]): LlmRequest<LiRead> {
   const lines = [
