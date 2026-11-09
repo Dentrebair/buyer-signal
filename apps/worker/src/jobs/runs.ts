@@ -47,6 +47,7 @@ import {
   setRunStatus,
   settleApifyRun,
   unfinishedRuns,
+  expireContactSearches,
   expireDraftRequests,
   withTransaction,
   purgeLinkedin,
@@ -232,6 +233,7 @@ export async function pollRuns(d: Deps): Promise<number> {
   await purgeSocialResults(d.pool);
   await purgeLinkedin(d.pool);
   await expireDraftRequests(d.pool);
+  await expireContactSearches(d.pool);
   return runs.length;
 }
 

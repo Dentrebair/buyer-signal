@@ -22,7 +22,7 @@ export interface LlmCallResult<T> {
   citations?: string[]; // URLs the provider's web search returned (only with `webSearch`)
 }
 
-export type LlmTask = "extraction" | "drafts" | "roast" | "resolve";
+export type LlmTask = "extraction" | "drafts" | "roast" | "resolve" | "match";
 
 export interface LlmRequest<T> {
   system: string;

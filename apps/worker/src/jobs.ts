@@ -14,3 +14,4 @@ export * from "./jobs/trends.ts";
 export * from "./jobs/alerts.ts";
 export * from "./jobs/archive.ts";
 export * from "./jobs/drift.ts";
+export * from "./jobs/contacts.ts";

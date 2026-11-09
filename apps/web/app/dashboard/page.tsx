@@ -83,6 +83,9 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
         <Link href="/trends" className="queue">
           <span>Trends</span>
         </Link>
+        <Link href="/contacts" className="queue">
+          <span>Find contacts</span>
+        </Link>
         {notice.alerts.length > 0 && (
           <Link href="/health#alerts" className="health-alert is-worse">
             <Warning size={16} aria-hidden />

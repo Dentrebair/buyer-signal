@@ -737,3 +737,44 @@ g.is-active path { opacity: 0.8; }
 .trend-summary { margin: 0; max-width: 72ch; color: var(--color-ink-2); }
 .trend-examples { margin: var(--space-xs) 0 0; padding-left: var(--space-md); display: flex; flex-direction: column; gap: var(--space-2xs); color: var(--color-ink-2); font-size: var(--text-sm); }
 
+
+/* Find contacts (/contacts, 2026-11-09, a screen to try out): the ask, then matched people |
+   the chosen person. Both columns scroll on their own; stacked on a phone. */
+.cs-main { gap: var(--space-md); }
+.cs-ask { display: flex; flex-direction: column; gap: var(--space-sm); }
+.cs-form { display: flex; flex-direction: column; gap: var(--space-2xs); max-width: 880px; }
+.cs-label { font-weight: 600; color: var(--color-ink); }
+.cs-row { display: flex; gap: var(--space-sm); align-items: flex-start; }
+.cs-row textarea {
+  flex: 1; min-width: 0; min-height: 64px; padding: var(--space-xs) var(--space-sm); resize: vertical;
+  background-color: var(--color-sheet); color: var(--color-ink); border: var(--rule-hair) solid var(--color-rule); border-radius: var(--radius-tag);
+  font: 500 0.9375rem/1.45 var(--font-display); transition: border-color var(--dur-micro) var(--ease-out);
+}
+.cs-row textarea:hover { border-color: var(--color-muted); }
+.cs-row textarea:focus-visible { outline: none; border-color: var(--color-focus); box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-focus) 30%, transparent); }
+.cs-history { display: flex; flex-wrap: wrap; gap: var(--space-2xs); }
+.cs-summary { font-size: var(--text-sm); max-width: 100ch; }
+.cs-board {
+  display: grid; grid-template-columns: minmax(240px, 1fr) minmax(0, 1.6fr); gap: var(--space-lg);
+  height: max(480px, calc(100dvh - 96px));
+}
+.cs-board .li-col-title { position: sticky; top: 0; z-index: var(--z-raised); background: var(--color-paper); padding-top: var(--space-2xs); }
+.cs-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-xs); }
+.cs-card-sub { font-size: var(--text-xs); color: var(--color-ink-2); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+.cs-match { flex-shrink: 0; font-size: var(--text-sm); font-weight: 600; padding: 0 var(--space-2xs); border-radius: var(--radius-tag); border: var(--rule-hair) solid var(--c-line); background: var(--c-bg); color: var(--c); }
+.cs-match.is-high { --c: var(--opt-green); --c-bg: var(--opt-green-bg); --c-line: var(--opt-green-line); }
+.cs-match.is-mid { --c: var(--opt-amber); --c-bg: var(--opt-amber-bg); --c-line: var(--opt-amber-line); }
+.cs-match.is-low { --c: var(--color-ink-2); --c-bg: var(--color-paper-2); --c-line: var(--color-rule); }
+.cs-match-lg { font-size: var(--text-md); padding: var(--space-3xs) var(--space-xs); }
+.cs-person { display: flex; flex-direction: column; gap: var(--space-2xs); padding-bottom: var(--space-sm); }
+.cs-person-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-sm); }
+.cs-name { font-size: var(--text-lg); font-weight: 600; color: var(--color-ink); }
+.cs-profile { align-self: flex-start; white-space: nowrap; }
+.cs-why { color: var(--color-ink); max-width: 72ch; }
+.cs-detail .li-pains, .cs-detail .li-cell-list { padding-bottom: var(--space-sm); }
+@media (max-width: 60rem) {
+  .cs-board { grid-template-columns: minmax(0, 1fr); height: auto; }
+  .cs-board .li-col { overflow: visible; padding-right: 0; }
+  .cs-board .li-col + .li-col { border-left: 0; padding-left: 0; border-top: var(--rule-bar) solid var(--color-rule-2); padding-top: var(--space-sm); }
+  .cs-row { flex-direction: column; align-items: stretch; }
+}

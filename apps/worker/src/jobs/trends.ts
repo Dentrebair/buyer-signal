@@ -26,13 +26,7 @@ import { type Deps } from "./deps.ts";
 // grouped by meaning; a group of 3 or more is named by the AI (≈ $0.0003), unless it kept most of
 // last run's members, when it keeps last run's name.
 export async function trendsJob(d: Pick<Deps, "pool" | "llm" | "embedder" | "now" | "log">): Promise<{ added: number; embedded: number; groups: number; named: number; reused: number }> {
-  const added = await collectPainStatements(d.pool);
-  let embedded = 0;
-  for (let batch = await statementsToEmbed(d.pool, 100); batch.length; batch = await statementsToEmbed(d.pool, 100)) {
-    const { vectors } = await d.embedder.embed(batch.map((b) => b.text));
-    await saveEmbeddings(d.pool, batch.map((b, i) => ({ id: b.id, vec: vectors[i]! })));
-    embedded += batch.length;
-  }
+  const { added, embedded } = await refreshPainStatements(d);
   const now = d.now().getTime();
   const DAY = 86_400_000;
   const all = await trendStatements(d.pool, TREND_WINDOW_DAYS);
@@ -86,4 +80,19 @@ export async function trendsJob(d: Pick<Deps, "pool" | "llm" | "embedder" | "now
   const out = { added, embedded, groups: rows.length, named, reused };
   d.log("trends built", out);
   return out;
+}
+
+// Copies in the pain read since the last run and embeds it. Also run by contact search, so a
+// search sees posts read since Monday's trends.
+export async function refreshPainStatements(d: Pick<Deps, "pool" | "embedder">): Promise<{ added: number; embedded: number; costUsd: number }> {
+  const added = await collectPainStatements(d.pool);
+  let embedded = 0;
+  let costUsd = 0;
+  for (let batch = await statementsToEmbed(d.pool, 100); batch.length; batch = await statementsToEmbed(d.pool, 100)) {
+    const out = await d.embedder.embed(batch.map((b) => b.text));
+    await saveEmbeddings(d.pool, batch.map((b, i) => ({ id: b.id, vec: out.vectors[i]! })));
+    embedded += batch.length;
+    costUsd += out.costUsd;
+  }
+  return { added, embedded, costUsd };
 }

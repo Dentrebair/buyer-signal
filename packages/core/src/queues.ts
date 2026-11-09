@@ -27,6 +27,7 @@ export const Q = {
   dailyAlerts: "daily-alerts",
   draftLlm: "draft-llm",
   trends: "trends",
+  contactSearch: "contact-search",
   deadLetter: "dead-letter",
 } as const;
 export type QueueName = (typeof Q)[keyof typeof Q];
@@ -116,4 +117,7 @@ export const CardLiComment = z.object({ liCommentId: z.uuid() });
 // Sent only by the Create drafts button (§9).
 export const DraftLlm = z.object({ requestId: z.uuid() });
 export type DraftLlm = z.infer<typeof DraftLlm>;
+// Contact search (operator's click only): the request row holds the text and takes the results.
+export const ContactSearch = z.object({ searchId: z.uuid() });
+export type ContactSearch = z.infer<typeof ContactSearch>;
 export type CardLiComment = z.infer<typeof CardLiComment>;

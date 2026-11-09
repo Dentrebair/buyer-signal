@@ -6,6 +6,7 @@ const BASE = "https://openrouter.ai/api/v1";
 const MODEL_ENV: Record<LlmTask, string> = {
   extraction: "MODEL_EXTRACTION",
   resolve: "MODEL_EXTRACTION",
+  match: "MODEL_EXTRACTION", // contact search: plan and rank
   drafts: "MODEL_DRAFTS",
   roast: "MODEL_ROAST",
 };
