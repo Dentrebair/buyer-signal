@@ -27,3 +27,13 @@ export async function asOperator<T>(fn: (c: pg.PoolClient) => Promise<T>): Promi
     return fn(c);
   });
 }
+
+// /roast (§8) is the one public page: it runs as bs_roast (migration 0029), which can only call
+// request_roast and roast_result, so a visitor's request can read or change nothing else. No
+// localhost check: it is meant to work once deployed.
+export async function asRoastVisitor<T>(fn: (c: pg.PoolClient) => Promise<T>): Promise<T> {
+  return withTransaction(pool, async (c) => {
+    await c.query("set local role bs_roast; set local idle_in_transaction_session_timeout = '30s'");
+    return fn(c);
+  });
+}

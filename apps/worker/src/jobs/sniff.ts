@@ -1,6 +1,8 @@
 // Website sniff (§5.4): pending seeds, then one site at a time.
+import type pg from "pg";
+import type { SniffResult } from "@bs/integrations";
 import {
-  urgencyTier,
+  type WebsiteSignal,
   Q,
   type SniffDomain,
   type VerticalSlug,
@@ -48,38 +50,46 @@ export async function sniffDomain(d: Deps, job: SniffDomain): Promise<string> {
     });
     return `unreachable ${seed.domain}`;
   }
-  const signals = websiteSignals(res.audit, res.tech);
-  await withTransaction(d.pool, async (c) => {
-    await saveSniff(c, companyId, {
-      reachable: true,
-      clientRendered: res.audit.clientRendered,
-      techStack: res.tech,
-      audit: { ...res.audit, pages: res.pages },
-      contactEmail: res.audit.contacts.emails[0] ?? null,
-      contactWhatsapp: res.audit.contacts.whatsapp[0] ?? null,
-      contactSourceUrl: res.audit.contacts.sourceUrl,
-    });
-    for (const sig of signals) {
-      const w = weightsFor(sig.sourceType);
-      await insertChallenge(c, {
-        companyId,
-        sourceType: sig.sourceType,
-        naturalId: `site:${seed.domain}:${sig.sourceType}`,
-        sourceUrl: res.finalUrl,
-        E: w.E,
-        I: w.I,
-        B: 0, // §7: website signals carry no blast radius
-        signalScore: signalScore(sig.sourceType, w, 0),
-        department: "Unknown",
-        postedAt: d.now(),
-        evidenceSnippet: sig.evidence,
-        structuredIntelligence: null,
-        llmModel: null,
-        urgencyTier: "low", // §1.1: website signals are passive structural debt
-      });
-    }
+  const signals = await withTransaction(d.pool, async (c) => {
+    const signals = await saveSiteSniff(c, d.now(), companyId, seed.domain, res);
     await recomputeCompanyScore(c, companyId);
     await finishSeed(c, job.seedId, "done");
+    return signals;
   });
   return `sniffed ${seed.domain}: ${res.tech.length} tech, ${signals.map((s) => s.sourceType).join("+") || "no website signal"}`;
+}
+
+// A reachable site's sniff saved on the company, and its website challenges (§5.4). Shared with
+// /roast. The caller recomputes the score in the same transaction.
+export async function saveSiteSniff(c: pg.PoolClient, now: Date, companyId: string, domain: string, res: Extract<SniffResult, { reachable: true }>): Promise<WebsiteSignal[]> {
+  const signals = websiteSignals(res.audit, res.tech);
+  await saveSniff(c, companyId, {
+    reachable: true,
+    clientRendered: res.audit.clientRendered,
+    techStack: res.tech,
+    audit: { ...res.audit, pages: res.pages },
+    contactEmail: res.audit.contacts.emails[0] ?? null,
+    contactWhatsapp: res.audit.contacts.whatsapp[0] ?? null,
+    contactSourceUrl: res.audit.contacts.sourceUrl,
+  });
+  for (const sig of signals) {
+    const w = weightsFor(sig.sourceType);
+    await insertChallenge(c, {
+      companyId,
+      sourceType: sig.sourceType,
+      naturalId: `site:${domain}:${sig.sourceType}`,
+      sourceUrl: res.finalUrl,
+      E: w.E,
+      I: w.I,
+      B: 0, // §7: website signals carry no blast radius
+      signalScore: signalScore(sig.sourceType, w, 0),
+      department: "Unknown",
+      postedAt: now,
+      evidenceSnippet: sig.evidence,
+      structuredIntelligence: null,
+      llmModel: null,
+      urgencyTier: "low", // §1.1: website signals are passive structural debt
+    });
+  }
+  return signals;
 }

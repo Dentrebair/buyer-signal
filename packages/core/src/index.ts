@@ -25,6 +25,7 @@ export * from "./drafts.ts";
 export * from "./painTypes.ts";
 export * from "./trends.ts";
 export * from "./contactMatch.ts";
+export * from "./roast.ts";
 export * from "./text.ts";
 export * from "./evals.ts";
 export * from "./techstack.ts";

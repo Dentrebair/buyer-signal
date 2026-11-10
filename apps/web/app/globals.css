@@ -778,3 +778,29 @@ g.is-active path { opacity: 0.8; }
   .cs-board .li-col + .li-col { border-left: 0; padding-left: 0; border-top: var(--rule-bar) solid var(--color-rule-2); padding-top: var(--space-sm); }
   .cs-row { flex-direction: column; align-items: stretch; }
 }
+
+/* /roast (§8): the public page. One column, the question set big, then the report. */
+.roast-main { max-width: 720px; margin: 0 auto; padding: var(--space-xl) var(--space-md) var(--space-2xl); display: flex; flex-direction: column; gap: var(--space-xl); }
+.roast-mark { flex: 1; font-weight: 600; color: var(--color-ink); }
+.roast-hero, .roast-wait, .roast-report { display: flex; flex-direction: column; gap: var(--space-md); }
+.roast h1 { font-size: var(--text-xl); line-height: 1.15; max-width: 22ch; overflow-wrap: break-word; min-width: 0; }
+.roast-lede { font-size: var(--text-md); color: var(--color-ink-2); max-width: 60ch; }
+.roast-form { display: flex; flex-direction: column; gap: var(--space-sm); max-width: 480px; }
+.roast-field { display: flex; flex-direction: column; gap: var(--space-2xs); font-weight: 600; color: var(--color-ink); }
+.roast-field input {
+  width: 100%; min-height: 44px; padding: 0 var(--space-sm);
+  background-color: var(--color-sheet); color: var(--color-ink); border: var(--rule-hair) solid var(--color-rule); border-radius: var(--radius-pill);
+  font: 500 1rem/1.2 var(--font-display); transition: border-color var(--dur-micro) var(--ease-out);
+}
+.roast-field input:hover { border-color: var(--color-muted); }
+.roast-field input:focus-visible { outline: none; border-color: var(--color-focus); box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-focus) 30%, transparent); }
+.roast-form .btn { align-self: flex-start; min-height: 44px; }
+.roast-findings { margin: 0; padding-left: var(--space-lg); display: flex; flex-direction: column; gap: var(--space-md); }
+.roast-findings li { padding-left: var(--space-2xs); }
+.roast-findings h2, .roast-win h2 { font-size: var(--text-md); color: var(--color-ink); }
+.roast-findings p { color: var(--color-ink-2); max-width: 66ch; }
+.roast-fix { margin-top: var(--space-3xs); }
+.roast-fix strong { color: var(--color-ink); }
+.roast-win { padding: var(--space-sm) var(--space-md); border-left: var(--rule-bar) solid var(--opt-green); background: var(--opt-green-bg); border-radius: var(--radius-tag); }
+.roast-win p { color: var(--color-ink); }
+.roast-report > .btn, .roast-wait > .btn { align-self: flex-start; }

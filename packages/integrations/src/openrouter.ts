@@ -13,7 +13,8 @@ const MODEL_ENV: Record<LlmTask, string> = {
 
 // A task with no model set falls back here. Drafts (§9, operator's choice 2026-11-08): OpenRouter's
 // Auto Router picks the model for each request; the model it chose is recorded with the draft.
-const DEFAULT_MODEL: Partial<Record<LlmTask, string>> = { drafts: "openrouter/auto" };
+// Drafts and roasts default to the Auto Router among the strong writers (§9; roast: operator, 2026-11-09).
+const DEFAULT_MODEL: Partial<Record<LlmTask, string>> = { drafts: "openrouter/auto", roast: "openrouter/auto" };
 // A router's price is listed as -1 (it depends on the model it picks). The budget gate's worst
 // case then assumes the dearest model it could pick: Claude Opus 5, $5 / $25 per million tokens
 // (2026-11-08). What is spent is the cost OpenRouter reports for the call.

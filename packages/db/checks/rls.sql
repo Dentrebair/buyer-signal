@@ -81,6 +81,18 @@ select pg_temp.try('authenticated', 'operator read contact searches', 'allowed',
 select pg_temp.try('anon', 'anon read contact searches', 'blocked', 'select count(*) from contact_searches');
 select pg_temp.try('authenticated', 'operator write search results', 'blocked', 'update contact_searches set results = ''[]'', status = ''done''');
 select pg_temp.try('authenticated', 'operator insert a finished search', 'blocked', 'insert into contact_searches (query, status) values (''rls check query'', ''done'')');
+-- /roast (0029): the public page's role can ask for a roast and read one result, nothing else;
+-- nobody else can call the functions. Rolled back with the rest.
+select pg_temp.try('bs_roast', 'roast visitor request a roast', 'allowed', 'select * from request_roast(''rls-roast.example'', ''a@rls-roast.example'', true, ''roast:rls'', 5, 1000)');
+select pg_temp.try('bs_roast', 'roast visitor read one result', 'allowed', 'select * from roast_result(gen_random_uuid())');
+select pg_temp.try('bs_roast', 'roast visitor list requests', 'blocked', 'select count(*) from roast_requests');
+select pg_temp.try('bs_roast', 'roast visitor read companies', 'blocked', 'select count(*) from companies');
+select pg_temp.try('bs_roast', 'roast visitor write rate hits', 'blocked', 'delete from rate_hits');
+select pg_temp.try('anon', 'anon request a roast', 'blocked', 'select * from request_roast(''rls-roast.example'', ''a@b.co'', false, ''roast:rls'', 5, 1000)');
+select pg_temp.try('authenticated', 'operator request a roast directly', 'blocked', 'select * from request_roast(''rls-roast.example'', ''a@b.co'', false, ''roast:rls'', 5, 1000)');
+select pg_temp.try('anon', 'anon read a roast result', 'blocked', 'select * from roast_result(gen_random_uuid())');
+select pg_temp.try('authenticated', 'operator read roast requests', 'allowed', 'select count(*) from roast_requests');
+select pg_temp.try('authenticated', 'operator change a roast', 'blocked', 'update roast_requests set status = ''done''');
 -- Trends (0027): read only for the operator, nothing for anon.
 select pg_temp.try('authenticated', 'operator read pain statements', 'allowed', 'select count(*) from pain_statements');
 select pg_temp.try('anon', 'anon read pain statements', 'blocked', 'select count(*) from pain_statements');

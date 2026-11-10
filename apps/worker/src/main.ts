@@ -3,10 +3,10 @@
 import * as Sentry from "@sentry/node";
 import { PgBoss } from "pg-boss";
 import { z } from "zod";
-import { type QueueName, ApifyRunEvent, CardLiComment, CardLiPost, ContactSearch, DraftLlm, ExtractLlm, FetchDataset, FetchLiRun, Q, ReadLiPost, SniffDomain, StartBoardRun, StartLiRun } from "@bs/core";
+import { type QueueName, ApifyRunEvent, CardLiComment, CardLiPost, ContactSearch, DraftLlm, Roast, ExtractLlm, FetchDataset, FetchLiRun, Q, ReadLiPost, SniffDomain, StartBoardRun, StartLiRun } from "@bs/core";
 import { BudgetExceededError, createPool, gatedEmbedder, gatedLlm } from "@bs/db";
 import { ApifyClient, OpenRouterClient, ProviderError, RdapClient, ResendMailer, SupabaseRawArchive, fetchPage, loadFingerprints, sniffWebsite } from "@bs/integrations";
-import { type Deps, auditDropped, contactSearchJob, dailyAlertsJob, draftLlm, trendsJob, cardLiComment, cardLiPost, driftCheck, purgeRaw, extractLlm, fetchDataset, fetchLiRun, ingestRotation, readLiPost, startLiRun, onApifyRunEvent, syncSearchArms, pollRuns, reconcileApify, resolveBatch, sniffDomain, sniffSeeds, startBoardRun } from "./jobs.ts";
+import { type Deps, auditDropped, contactSearchJob, roastJob, dailyAlertsJob, draftLlm, trendsJob, cardLiComment, cardLiPost, driftCheck, purgeRaw, extractLlm, fetchDataset, fetchLiRun, ingestRotation, readLiPost, startLiRun, onApifyRunEvent, syncSearchArms, pollRuns, reconcileApify, resolveBatch, sniffDomain, sniffSeeds, startBoardRun } from "./jobs.ts";
 
 const env = z
   .object({
@@ -95,6 +95,8 @@ const queues: QueueDef<any>[] = [
   { name: Q.draftLlm, concurrency: 1, expireInSeconds: 180, schema: DraftLlm, run: draftLlm },
   // Contact search (/contacts): only enqueued by the Find contacts button; about a cent each.
   { name: Q.contactSearch, concurrency: 1, expireInSeconds: 180, schema: ContactSearch, run: contactSearchJob },
+  // /roast (§8): one per visitor request; the sniff is $0, the teardown a few cents at most.
+  { name: Q.roast, concurrency: 2, expireInSeconds: 180, schema: Roast, run: roastJob },
   // Trends (§5.6): weekly, and Run now on /trends; cents at most.
   { name: Q.trends, concurrency: 1, expireInSeconds: 900, schema: z.unknown(), run: (d) => trendsJob(d) },
   // LinkedIn post search (§4.1d): Run now and the rotation's social slot; completion through poll-runs.

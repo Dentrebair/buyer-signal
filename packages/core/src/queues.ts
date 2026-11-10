@@ -28,6 +28,7 @@ export const Q = {
   draftLlm: "draft-llm",
   trends: "trends",
   contactSearch: "contact-search",
+  roast: "roast",
   deadLetter: "dead-letter",
 } as const;
 export type QueueName = (typeof Q)[keyof typeof Q];
@@ -120,4 +121,7 @@ export type DraftLlm = z.infer<typeof DraftLlm>;
 // Contact search (operator's click only): the request row holds the text and takes the results.
 export const ContactSearch = z.object({ searchId: z.uuid() });
 export type ContactSearch = z.infer<typeof ContactSearch>;
+// /roast (§8): the request row holds the domain and email and takes the teardown.
+export const Roast = z.object({ roastId: z.uuid() });
+export type Roast = z.infer<typeof Roast>;
 export type CardLiComment = z.infer<typeof CardLiComment>;

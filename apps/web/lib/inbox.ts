@@ -122,6 +122,7 @@ export interface Challenge {
   author_relation: string | null;
   urgency_tier: UrgencyTier | null;
   pain_types: PainType[];
+  inbound_verified: boolean | null; // /roast only (§8.1)
 }
 
 export interface Company extends Row {
@@ -246,7 +247,7 @@ export function loadInbox(view: View): Promise<Inbox> {
         const challenges = (
           await c.query<Challenge>(
             `select id, source_type, source_url, signal_score, evidence_confidence, buying_intent, blast_radius, department,
-                    posted_at, created_at, evidence_snippet, structured_intelligence, llm_model, author_relation, urgency_tier, pain_types
+                    posted_at, created_at, evidence_snippet, structured_intelligence, llm_model, author_relation, urgency_tier, pain_types, inbound_verified
                from challenges where company_id = $1 order by coalesce(posted_at, created_at) desc`,
             [selectedId],
           )

@@ -582,6 +582,17 @@ function Notices({ company: c }: { company: Company }) {
       ),
       warn: true,
     });
+  const inbound = c.challenges.find((ch) => ch.source_type === "inbound");
+  if (inbound)
+    items.push(
+      inbound.inbound_verified
+        ? { icon: <Sparkle size={14} aria-hidden />, text: <><strong>Inbound through /roast.</strong> They asked for a website review; the email is on their own domain.</> }
+        : {
+            icon: <Warning size={14} aria-hidden />,
+            text: <><strong>Unverified inbound.</strong> Asked for a review through /roast with free mail or another domain. Check who they are first.</>,
+            warn: true,
+          },
+    );
   if (c.badges.includes("employee_post"))
     items.push({
       icon: <Warning size={14} aria-hidden />,

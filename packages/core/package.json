@@ -14,7 +14,8 @@
     "./drafts": "./src/drafts.ts",
     "./painTypes": "./src/painTypes.ts",
     "./text": "./src/text.ts",
-    "./contactMatch": "./src/contactMatch.ts"
+    "./contactMatch": "./src/contactMatch.ts",
+    "./roast": "./src/roast.ts"
   },
   "dependencies": {
     "cheerio": "1.2.0",

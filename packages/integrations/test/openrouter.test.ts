@@ -76,7 +76,7 @@ describe("OpenRouterClient", () => {
     expect(JSON.parse(fixed.calls[0]!.body as string).plugins).toBeUndefined();
   });
 
-    it("a router's price (-1, it depends on the model picked) is budgeted at the dearest model's", async () => {
+  it("a router's price (-1, it depends on the model picked) is budgeted at the dearest model's", async () => {
     const models = new Response(JSON.stringify({ data: [{ id: "openrouter/auto", pricing: { prompt: "-1", completion: "-1" } }] }));
     const { f } = fakeFetch([models]);
     const worst = await new OpenRouterClient({ env: { OPENROUTER_API_KEY: "k" }, fetch: f }).worstCaseUsd("drafts", { ...req, maxTokens: 1600, reasoningTokens: 1024 });
@@ -85,7 +85,7 @@ describe("OpenRouterClient", () => {
     expect(worst).toBeLessThan(0.2);
   });
 
-    it("web search: sends the web plugin and returns the cited URLs", async () => {
+  it("web search: sends the web plugin and returns the cited URLs", async () => {
     const res = new Response(
       JSON.stringify({
         model: env.MODEL_EXTRACTION,
@@ -104,9 +104,10 @@ describe("OpenRouterClient", () => {
   });
 
   it("refuses to start without the task's model setting, unless the task has a default", () => {
-    expect(() => new OpenRouterClient({ env: { OPENROUTER_API_KEY: "k" } }).model("roast")).toThrow(/MODEL_ROAST/);
-    // Drafts (§9) default to OpenRouter's Auto Router; MODEL_DRAFTS overrides it.
+    expect(() => new OpenRouterClient({ env: { OPENROUTER_API_KEY: "k" } }).model("extraction")).toThrow(/MODEL_EXTRACTION/);
+    // Drafts (§9) and roasts (§8) default to OpenRouter's Auto Router; MODEL_DRAFTS / MODEL_ROAST override it.
     expect(new OpenRouterClient({ env: { OPENROUTER_API_KEY: "k" } }).model("drafts")).toBe("openrouter/auto");
+    expect(new OpenRouterClient({ env: { OPENROUTER_API_KEY: "k" } }).model("roast")).toBe("openrouter/auto");
     expect(new OpenRouterClient({ env: { OPENROUTER_API_KEY: "k", MODEL_DRAFTS: "google/gemini-3.1-pro-preview" } }).model("drafts")).toBe("google/gemini-3.1-pro-preview");
   });
 });
